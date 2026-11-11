@@ -1,2 +1,41 @@
 /model/
+/.venv/
+__pycache__/
+*.pyc
 .cursor/
+
+# Generated data; keep generators, manifests, and the existing directory marker.
+/data/raw/*
+!/data/raw/.gitkeep
+/data/generated/
+/data/processed/
+
+# Model artifacts and execution traces, wherever a runner writes them.
+checkpoints/
+adapters/
+traces/
+runs/
+.cache/
+*.safetensors
+*.gguf
+*.ckpt
+*.pt
+*.pth
+pytorch_model*.bin
+*.trace.json
+*.trace.jsonl
+*.log
+
+# Credentials; sanitized examples can be tracked.
+.env
+.env.*
+!.env.example
+.aws/
+.ssh/
+.credentials/
+credentials*.json
+*service-account*.json
+token.json
+token.txt
+*.pem
+*.key
