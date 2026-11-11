@@ -14,6 +14,7 @@ runtime:
   kv_bits: null
   prompt_cache_between_calls: false
   max_sequence_tokens: 2048
+  prefill_step_size: 256
 decoding:
   temp: 0.0
   top_p: 1.0
