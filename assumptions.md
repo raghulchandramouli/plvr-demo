@@ -110,6 +110,59 @@ Memory reports keep process high-water RSS and cumulative MLX allocator peak sep
 
 The corrected run `runs/baseline-smoke-20261111-02` completed all 30 calls with one model load. It recorded 2 successes, 18 contract failures, 5 formatting failures, and 5 semantic failures. Wall time was 104.308828 seconds, with 19,638 submitted prompt tokens and 2,586 generated tokens. Process peak RSS was 6,458,277,888 bytes, MLX peak allocation was 6,397,980,784 bytes, and run artifacts occupied 936,643 logical bytes. Every trace recorded BF16 KV-cache and emitted log-probability arrays. The first development run is preserved separately. All 21 tests and the corrected run's offline replay audit pass. [The baseline report](experiments/baseline-smoke-v1.md) records the scorer correction, both runs, failure examples, and repeat commands.
 
+## Phase 2 typed runtime and finite grammar
+
+This phase implements deterministic oracle primitives, not a neural extractor or a trained primitive library. A structured request explicitly supplies tasks, intents, grounded arguments, dependencies, and a return reference. Free-form input without structured tasks fails with `needs_semantic_extraction`. Expected answers and fixture scores never enter primitive context.
+
+### Types and provenance
+
+`src/plvr3b/types.py` defines `Request`, `SourceSpan`, `Task`, `TaskList`, `DependencyGraph`, `ToolRegistry`, `ToolCall`, `ToolCallList`, `Scratchpad`, and `ContractViolation`. The domain records are frozen, except the per-execution scratchpad and result container. Task and call bindings are tuples. The registry is a read-only typed view over the existing 18 `baseline_tasks.TOOLS` functions and argument schemas. Phase 1's model, prompts, corpus, and saved traces are unchanged.
+
+`Context` preserves exactly the request, tool registry, and budget. `Scratchpad` adds a fresh deep copy of the initial mock state, completed results, execution events, and primitive invocation events. No mutable scratchpad is shared across candidates.
+
+Every argument is one of three expressions:
+
+- `Literal(value, SourceSpan(request_id, start, end))` uses a zero-based, half-open Python character range in the original request text. The value's spelling must match that exact range, and the request identity must match. Booleans use `true` or `false` spelling.
+- `ResultRef(task_id, field)` keeps a symbolic earlier-result source until execution. References are checked against declared result fields and semantic kinds before execution. A customer-ID input cannot bind to a product-ID output merely because both are strings. A whole-record reference is allowed as a return value, but not as a scalar argument.
+- `Transform("parse_integer", grounded_string)` explicitly converts a grounded ASCII digit string of at most 256 characters. The operand must be a literal, not another transform or reference. The `03` fixture demonstrates normalization while retaining its operand and source span. Arbitrary expressions and transformation names are rejected. Integer literal representations are bounded to 256 digits before string conversion; tool-specific quantity limits remain tighter.
+
+Resolved arguments retain their original expression provenance in execution events. Each tool-result field is tagged with its producing task and field name. Downstream values are read from completed results rather than guessed from expected answers or initial mock identifiers.
+
+### Primitive signatures and contracts
+
+Every oracle primitive implements `run(value, context)` and `validate(value, output, context)`. Validation returns a tuple of structured `ContractViolation` records. The executor invokes validation after each primitive run. Task success is computed separately by `score_fixture`.
+
+| Primitive | Signature | Required behavior |
+| --- | --- | --- |
+| `Decompose` | `Request -> TaskList` | Preserve all supplied structured tasks, request order, arguments, identities, dependencies, and provenance. |
+| `Get-Order` | `TaskList -> TaskList` | Stable topological ordering of explicit dependencies and result-reference edges. Preserve every task and binding. Independent ties follow request order. Reject cycles. |
+| `Match` | `Task × ToolRegistry -> ToolCall` | Preserve the task identity and grounded arguments, select its declared supported intent, and retain unresolved result references. Do not execute tools. |
+| `Foreach(Match)` | `TaskList × ToolRegistry -> ToolCallList` | Invoke single-task `Match` sequentially once per item. An explicitly empty collection produces no calls. |
+
+The registry, request, and budgets remain shared context across these signatures. `ToolRegistry` is an external requirement; intermediate `TaskList` values produced by `Decompose` are not additional user inputs. Every primitive has the singleton parameter domain `{ { } }`. The only ordering algorithm is stable topological order. There is no identity variant or bulk `Match` signature.
+
+Contracts check required and unexpected fields, argument names, scalar types, semantic reference types, source spans, result fields, known intents, unique task/call IDs, dependency existence and cycles, return presence, requested action coverage, and budgets. IDs have their declared customer/order/product/return/booking prefixes. Quantities are integers in `[1,100]`, with booleans excluded. Strings are nonempty and bounded to 256 characters at tool boundaries; dates must be valid canonical ISO dates. Booking statuses are `confirmed` or `cancelled`. Tool preconditions, result fields, and returned value types are checked during execution.
+
+An explicit empty request has `tasks=[]` and `return=null`. Missing structured input is not treated as an empty request. Execution requires every dependency to have completed before its consumer. It rejects extra, duplicate, missing, or fabricated calls, and preserves completed events on a later contract failure. All `Parallel`, general `Loop`, and `Identity` operators are unsupported. Rejecting all parallel execution also rejects unsafe parallel mutation. Bounded-loop checks cover `Foreach` iteration and invocation limits.
+
+### Grammar, bounds, and canonicalization
+
+Phase 2's AST composes primitives. It is distinct from Phase 1's historical JSON `Sequence` of tool calls. Phase 1's wire grammar and replay behavior remain intact.
+
+`configs/search.yaml` fixes maximum operator nesting to 2, Sequence width to 4, tasks/tool calls/Foreach iterations to 6 each, and oracle primitive run attempts to 16 per execution. Primitive leaves do not add operator depth. `Foreach` admits only the single `Match` primitive; nested loops and composed loop bodies are rejected. No conditionals or arbitrary executable expressions are admitted.
+
+Enumeration forms Sequence words of lengths 1 through 4 from the three primitive leaves and the three syntactic Foreach-wrapped leaves. It checks actual signatures and retains only complete `Request -> ToolCallList` programs. Incompatible Foreach bodies fail type checks. Canonicalization flattens nested Sequences, removes singleton Sequences, and collapses adjacent repeated `Get-Order`. Repeating stable topological sorting does not create another useful behavior.
+
+The resulting complete shapes are `Sequence(Decompose, Foreach(Match))` and `Sequence(Decompose, Get-Order, Foreach(Match))`. Actual execution, rather than syntax-tree counts, determines their fixture outcomes and behavior classes. Behavior fingerprints exclude call-ID spelling and timing. They include observed tool actions/results, final state, outcome, and contract failures. Cost-inclusive fingerprints additionally include the primitive invocation count.
+
+The cost metric counts logical oracle `run` attempts, including failed attempts. It excludes validation CPU and operator dispatch. In particular, `Get-Order` validation recomputes its expected order without adding an invocation event. These counts are not neural calls, token costs, latency, or demonstrated compute savings.
+
+The gate defines a generally useful workflow as one that succeeds on every admitted development fixture. It also reports coverage/cost Pareto candidates. Multiple Pareto candidates alone do not establish a rich program search space. A tiny space or one universally correct workflow requires exhaustive evaluation and does not justify guided search.
+
+The final run `runs/phase2-oracle-20261111-01` enumerated 1,554 syntax trees, 3 type-valid trees, and 2 canonical programs. It saved 68 candidate/fixture traces across 34 oracle-validated development fixtures. Without `Get-Order`, the program solved 32/34 fixtures with 81 logical primitive run attempts and 43 completed tool calls. With `Get-Order`, it solved 34/34 with 115 run attempts and 47 tool calls. Both semantic and cost-inclusive behavior counts were 2. Only one workflow solved every fixture. The verdict is `limited` and `exhaustive_only`, with `guided_search_justified=false`.
+
+All 49 tests pass. The saved executions, counters, hashes, and behavior fingerprints were recomputed and matched. Parser regression checks cover oversized integer operands/literals, nested transformation operands, program depth, and Sequence width. Phase 1's source, corpus, and replay remain unchanged. No model inference or fine-tuning was used for Phase 2. [The Phase 2 report](experiments/phase2-oracle-v1.md) records the exact workflows, limits, evidence, and repeat command. The richer search-space gate remains open; this result does not authorize a guided-search advantage claim.
+
 ## License review
 
 The current inventory contains the Qwen model and only `.gitkeep` files under `data/`. No third-party datasets or generated training examples are present. No checkpoint or dataset distribution is authorized by this review.

@@ -65,3 +65,32 @@ recording. Whole-run timing also includes model loading and evaluation.
 
 See [assumptions.md](assumptions.md) for provenance, resource limits, and the
 verified software status.
+
+## Check the typed runtime and finite program space
+
+Phase 2 uses deterministic oracle primitives against the same 18 mock tools.
+It does not load Qwen. Run from the repository root with a new output directory:
+
+```sh
+uv run --locked env PYTHONPATH=src python -m unittest discover -s tests -v
+uv run --locked python scripts/run_search.py --oracle-only --output runs/phase2-oracle-001
+```
+
+The command validates the oracle fixtures before enumerating the declared
+grammar. It saves `fixtures.json`, `oracle_checks.json`, `enumeration.json`,
+`metadata.json`, `gate_summary.json`, and a trace for each candidate/fixture pair.
+
+The grammar composes `Decompose`, optional `Get-Order`, and `Foreach(Match)`.
+`Match` handles one task. Literal arguments carry checked request spans;
+references retain their source task until execution. Every candidate gets fresh
+mock state. Primitive validation and task scoring are separate.
+
+A completed command means the exhaustive experiment ran. Inspect `gate`,
+`verdict`, and `guided_search_justified` in `gate_summary.json` for the search-space
+decision. A tiny space or one universally correct workflow calls for exhaustive
+evaluation. It does not justify a guided-search comparison.
+
+The [Phase 2 report](experiments/phase2-oracle-v1.md) records the current result.
+The ordered oracle workflow passes 34/34 fixtures; preserving request order
+passes 32/34. Only one workflow succeeds universally, so the verdict is
+`exhaustive_only`. This does not improve or replace the measured Qwen baseline.
