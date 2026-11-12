@@ -47,8 +47,9 @@ with the [ordered trace](../runs/phase2-oracle-20261111-01/traces/17dd6d7f7d5d-s
 Both candidates are Pareto choices under the declared coverage/count metric.
 The unordered workflow uses fewer logical oracle run attempts but fails two
 fixtures. Only the ordering workflow solves every fixture. Two candidates form
-a trivial exhaustive space, which does not justify guided search. Phase 3
-guided-search comparisons remain deferred.
+a trivial exhaustive space, which does not justify guided search. Phase 3 later
+ran guided and random search on this space as a mechanics check only. See the
+[Phase 3 report](phase3-search-v1.md).
 
 Invocation counts exclude validation CPU and operator dispatch. They include
 failed logical run attempts. They are not neural calls, token costs, latency,
