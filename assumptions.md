@@ -1,6 +1,6 @@
 # PLVR-3B assumptions
 
-Recorded on 2026-11-11. This repository has downloaded source weights, a pinned MLX LM environment, and a working local smoke baseline. Training, search, and comparative benchmark runs have not started.
+Recorded on 2026-11-11. This repository has downloaded source weights, a pinned MLX LM environment, a local smoke baseline, and verified oracle runtime/search mechanics. Training and model-based comparative benchmark runs have not started.
 
 ## Hardware and software
 
@@ -163,6 +163,53 @@ The final run `runs/phase2-oracle-20261111-01` enumerated 1,554 syntax trees, 3 
 
 All 49 tests pass. The saved executions, counters, hashes, and behavior fingerprints were recomputed and matched. Parser regression checks cover oversized integer operands/literals, nested transformation operands, program depth, and Sequence width. Phase 1's source, corpus, and replay remain unchanged. No model inference or fine-tuning was used for Phase 2. [The Phase 2 report](experiments/phase2-oracle-v1.md) records the exact workflows, limits, evidence, and repeat command. The richer search-space gate remains open; this result does not authorize a guided-search advantage claim.
 
+## Phase 3 search, ranking, and caches
+
+The comparison mode is `scripts/run_search.py --oracle-only --mode compare`. The default gate mode remains Phase 2. The operation catalog in `types.py` supplies one authoritative set of primitive signatures and versions. Every runtime tree node stores its operation, children, parameter record, free input requirements, output type, and constraints. Historical tool-program serialization is unchanged.
+
+`resolve_types` starts from `ToolCallList` and the supplied types `{Request, ToolRegistry}`. It finds producers by declared signatures and the admitted single-task Foreach lift, then derives predecessor requirements until they close against supplied input. The bounded self-loop for `Get-Order` can be traversed before `Decompose` closes `TaskList` against `Request`. No target program, oracle action tree, or exhaustive candidate pool is supplied to discovery. The independent raw enumerator remains the reference. Catalog subsets may remove operators; changed signatures, versions, or context requirements fail explicitly as `unsupported_catalog` until a new library is implemented.
+
+Type construction and `bind_parameters` are separate. The present domains are `[{}]` for each primitive, so there is one assignment per type plan. Nonempty or unknown parameter domains are rejected. Intermediate values produced by the composition do not become external requirements. Complete programs require exactly `Request` and `ToolRegistry`.
+
+### Shared budgets and sampling
+
+The declared comparison limits are 2 backward construction layers, operator depth 2, beam width 4, per-key cap 4, and at most 20 emitted layer plans. Layer 1 derives a goal-producing suffix and its unmet inputs. Layer 2 closes the remaining input through bounded predecessor compositions. Guided construction counts both open and closed derivation plans against the emission cap. Open plans are ordered structurally; only closed plans receive measured execution scores. The closed beam retains at most four candidates per required-input/output key and four globally.
+
+All arms additionally share a maximum of 20 closed candidate evaluations and `20 × 34 = 680` candidate/fixture evaluations. A candidate is scored on the entire identical ordered fixture manifest; no arm compares a partial subset. The runtime's six-task/call/iteration and sixteen-primitive-invocation budgets remain in effect. Comparison mode requires the declared two-layer grammar. One-layer closure failure is separately tested by the type resolver.
+
+Exhaustive uses the independent canonical reference. Guided constructs candidates backward and retains scored closed candidates. Random constructs the full admissible canonical pool before shuffling, then samples without replacement until the pool or shared evaluation cap is exhausted. It is uniform over canonical programs, not raw syntax trees. Seeds are 0, 1, and 2. A smaller emission cap is applied after pool construction and cannot bias the sampling population to the first discovered program.
+
+Search stops at the first of three conditions, recorded per arm as `stop_reason`. `type_space_exhausted` means every admissible canonical program was evaluated. `plan_budget` means guided construction emitted 20 layer plans. `candidate_budget` means 20 closed candidates were evaluated. No arm stops early on a perfect score. The recorded runs stop with `type_space_exhausted`, because the pool has two programs.
+
+Every arm and random seed gets an isolated cold cache. Oracle solvability checks execute the independent reference without caching before arm evaluation. Reference work is recorded separately and cannot warm a method's cache. All methods use the same final development-set selector.
+
+### Exact local ranking policy
+
+The four-field rank is `(unmet_requirements, type_errors, value_error, deviation)`, compared lexicographically. Canonical node count and canonical serialized label break remaining ties. Primitive call cost is not substituted for deviation or a rank component.
+
+- `unmet_requirements` is 1 if any fixture fails execution or lacks a required result, otherwise 0. A legitimate empty request returning `None` is not a failure.
+- Tool calls align one-to-one by maximizing matching function names first, then exact typed argument agreement. Stable index pairs break alignment ties. Alignment occurs before computing the rank; it cannot hide a type error by pairing two different functions.
+- For a matched function, agreement is `0.5 + 0.5 × correct_typed_bindings / argument_key_union_size`. A zero-argument match has agreement 1. The error atom is `1 - agreement`. A wrong function gets no binding credit and contributes atom 1. Missing or extra calls each add one type error and atom 1. Missing, extra, or differently typed bindings add type errors. Booleans and integers are distinct.
+- Returned values and full expected mock state also contribute atoms. Dictionaries align by field/entity key. Lists of records align by an unambiguous unique identifier using the declared priority `customer_id`, `order_id`, `product_id`, `return_id`, `booking_id`, `option_id`; other lists compare by position. Missing/extra fields or items and type mismatches add one type error and atom 1. Same-typed scalar differences add atom 1, with exact scalar matches adding 0. Numeric differences use exact agreement, not an invented continuous scale.
+- Value error is `sqrt(sum(atom²))` across all scored objects and all examples. Per-example magnitudes are not summed. Action and output/state checks intentionally provide cumulative penalties; they do not normalize by the number of correct unchanged fields. A failed execution always has a nonzero error contribution.
+- Deviation is the symmetric difference of free required input types and the shared incumbent input set `{Request, ToolRegistry}`. It is 0 for both current complete candidates. The local incumbent set is fixed; no AST-edit distance is used.
+
+Strict `score_fixture` success remains separate from partial-credit ranking. This alignment, atom policy, full-fixture closed-plan scoring, and fixed incumbent set are explicit local choices. They are not claims of exact paper scoring fidelity.
+
+### Cache identities and invalidation
+
+`RuntimeCache` is integrated into `executor.invoke` and `run_program`. Primitive keys include the typed input, parameters, preserved request and read-only registry descriptors, budgets, and `VersionStamp`. The version stamp includes primitive/type/contract implementation hashes, model revision, adapter revision, prompt/template identity, full decoding digest, full model/runtime policy digest, and executor/tool implementation hashes. Registry callable identity includes bytecode/constants, positional defaults, keyword-only defaults, and closure values. Request IDs and source spans remain part of the input identity.
+
+Execution keys additionally include the canonical program and full initial mock environment state. Caches store executions, not gold answers or scores. A changed expected answer is rescored even when execution is reused. Outputs are defensively copied on storage and retrieval. Primitive hits are contract-validated. Updating a version stamp, including after an adapter update, clears both stores. Tests verify actual misses after version, schema, implementation, environment, request/provenance, budget, and runtime-representation changes.
+
+Logical primitive requests include cache-served requests. `primitive_misses` counts main-path primitive `run` attempts; validation recomputation is excluded. In particular, `Get-Order` validation recomputes ordering and is not counted as a main-path call. Execution-cache hits mark their primitive evidence as replayed rather than rerunning it. This caching applies only to the deterministic local mock runtime, with all environment state supplied explicitly.
+
+### Recorded Phase 3 result
+
+`runs/phase3-search-20261111-01` records discovery without a supplied program template. Exhaustive, guided, and random seeds 0/1/2 all select the 34/34 oracle workflow. Each cold arm evaluates 2 candidates on 34 fixtures, producing 68 fixture evaluations, 115 main-path primitive misses, 81 primitive hits, 68 execution-cache misses, and 0 execution-cache hits. Across the five arms there are 340 saved fixture executions; uncached reference preflight adds 68 separately recorded evaluations. Warm execution hits and adapter invalidation are exercised by tests, not claimed as observed cold-arm hits.
+
+All 70 tests pass. Root independently replayed the 340 arm executions and reconciled rankings, selections, source/fixture hashes, and cache ledgers. Phase 1 replay and the Phase 2 gate still pass. The grammar remains 1,554 raw trees, 3 type-valid trees, 2 canonical programs, and 2 semantic behavior classes. This is a mechanics-only result with `guided_search_advantage=false` and `paper_matched=false`. No model inference or fine-tuning ran. See [the Phase 3 report](experiments/phase3-search-v1.md).
+
 ## License review
 
 The current inventory contains the Qwen model and only `.gitkeep` files under `data/`. No third-party datasets or generated training examples are present. No checkpoint or dataset distribution is authorized by this review.
@@ -181,6 +228,8 @@ For synthetic data, record generator provenance and any source content or local 
 
 ## Differences from the target paper
 
+Paper status checked on 2026-11-11. The [current arXiv record](https://arxiv.org/abs/2608.28421) reports that the authors withdrew v2 on 2026-09-30 because of benchmark baseline errors and discarded the experiments. The pinned v1 remains a mechanism reference for this local study. Its benchmark claims are not treated as validated reproduction targets.
+
 Target: [PLVR, arXiv 2608.28421v1](https://arxiv.org/html/2608.28421v1). These are planned adaptations, not reproduced results:
 
 - One shared Qwen2.5-3B-Instruct backbone with prompts first and separate LoRA adapters later replaces the paper's multi-model primitive library.
@@ -188,6 +237,10 @@ Target: [PLVR, arXiv 2608.28421v1](https://arxiv.org/html/2608.28421v1). These a
 - MLX LM on one M5 Pro replaces the paper's execution and training setup. Local resource caps, data allocations, and proposed LoRA settings are project choices.
 - Exact primitive signatures, operator semantics, loss, alignment, ranking, and search-limit correspondence still require an audit against the paper before claiming mechanism fidelity.
 - Future tau2 evaluation uses a local Qwen user simulator. Record that simulator change as a benchmark adaptation.
+
+The Phase 3 audit checked v1 sections 3.5 and 3.6 and Appendix A.1/A.3. Its final search settings are 4 layers, composition depth 3, beam width 8, per-key cap 8, and 60 plans. The requested initial settings of 2, 2, 4, 4, and 20 are local debugging adaptations. The ranking uses unmet execution requirements, type errors, cumulative L2 value error, and required-input-set deviation, followed by size and label. The local closed-plan evaluator and exact partial-credit rules must be recorded separately; this project does not claim paper-matched search.
+
+No author implementation was available on 2026-11-12. The v1 abstract says the authors release a symbolic backpropagation library and a conformance checker, but v1 gives no URL. Its reproducibility statement says both will be released after peer review. The current arXiv record links no code. Every primitive, grammar, ranking, and search component here is a local implementation written from the v1 text.
 
 ## Files kept out of Git
 

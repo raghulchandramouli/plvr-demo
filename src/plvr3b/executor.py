@@ -65,13 +65,20 @@ def unordered_program():
     return Sequence((PrimitiveNode("Decompose"), Foreach(PrimitiveNode("Match"))))
 
 
-def invoke(name, value, context, scratch):
+def invoke(name, value, context, scratch, cache=None):
     require(len(scratch.primitive_events) < context.budget.max_primitive_calls, "primitive_budget", name, "Primitive invocation budget exhausted")
     primitive = PRIMITIVES[name]
     event = {"name": name, "input_type": type(value).__name__, "status": "attempted"}
     scratch.primitive_events.append(event)
+    cache_key = None
+    hit = False
+    if cache is not None:
+        cache_key = cache.key("primitive", {"name": name, "parameters": (), "input": value, "context": context})
+        hit, output = cache.get("primitive", cache_key)
+        event["cache_hit"] = hit
     try:
-        output = primitive.run(value, context)
+        if not hit:
+            output = primitive.run(value, context)
     except ContractError:
         event["status"] = "failed"
         raise
@@ -81,19 +88,21 @@ def invoke(name, value, context, scratch):
         event["status"] = "failed"
         error = ContractError(violations[0].code, violations[0].path, violations[0].message)
         raise error
+    if cache is not None and not hit:
+        cache.put("primitive", cache_key, output)
     return output
 
 
-def compose(program, value, context, scratch):
+def compose(program, value, context, scratch, cache=None):
     if isinstance(program, PrimitiveNode):
-        return invoke(program.name, value, context, scratch)
+        return invoke(program.name, value, context, scratch, cache)
     if isinstance(program, Sequence):
         for child in program.children:
-            value = compose(child, value, context, scratch)
+            value = compose(child, value, context, scratch, cache)
         return value
     require(isinstance(value, TaskList), "wrong_input_type", "Foreach", "Expected TaskList")
     require(len(value.items) <= context.budget.max_iterations, "iteration_budget", "Foreach", "Foreach iteration limit exceeded")
-    return ToolCallList(tuple(compose(program.child, task, context, scratch) for task in value.items))
+    return ToolCallList(tuple(compose(program.child, task, context, scratch, cache) for task in value.items))
 
 
 def resolve(value, scratch):
@@ -140,14 +149,25 @@ def execute_calls(calls, context, scratch):
     return resolve(context.request.return_value, scratch)[0] if context.request.return_value else None
 
 
-def run_program(program, request, tools, initial_state, budget=Budget()):
+def run_program(program, request, tools, initial_state, budget=Budget(), cache=None):
     scratch = Scratchpad(request, tools, budget, deepcopy(initial_state))
     context = Context(request, tools, budget)
     try:
         validate_request(request, tools, budget)
         require(signature(program) == ("Request", "ToolCallList"), "incompatible_program", "program", "Complete programs require Request and produce ToolCallList")
-        calls = compose(program, request, context, scratch)
+        cache_key = None
+        if cache is not None:
+            cache_key = cache.key("execution", {"program": program_data(program), "context": context, "environment": initial_state})
+            hit, saved = cache.get("execution", cache_key)
+            if hit:
+                for event in saved.primitive_events:
+                    event["execution_cache_replay"] = True
+                return saved
+        calls = compose(program, request, context, scratch, cache)
         result = execute_calls(calls, context, scratch)
-        return Execution("executed", result, scratch.state, scratch.events, scratch.primitive_events, (), scratch.results)
+        execution = Execution("executed", result, scratch.state, scratch.events, scratch.primitive_events, (), scratch.results)
+        if cache is not None:
+            cache.put("execution", cache_key, execution)
+        return execution
     except ContractError as error:
         return Execution("contract_failure", None, scratch.state, scratch.events, scratch.primitive_events, error.violations, scratch.results)

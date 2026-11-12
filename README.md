@@ -1,7 +1,8 @@
 # PLVR-3B
 
 Local Qwen2.5-3B-Instruct experiments on Apple silicon. The smoke baseline runs
-against deterministic mock tools. Search and training remain placeholders.
+against deterministic mock tools. Program search runs on deterministic oracle
+primitives only; Qwen-backed primitives and training are not implemented yet.
 
 ## Prepare the runtime
 
@@ -94,3 +95,19 @@ The [Phase 2 report](experiments/phase2-oracle-v1.md) records the current result
 The ordered oracle workflow passes 34/34 fixtures; preserving request order
 passes 32/34. Only one workflow succeeds universally, so the verdict is
 `exhaustive_only`. This does not improve or replace the measured Qwen baseline.
+
+## Compare search mechanics
+
+```sh
+uv run --locked python scripts/run_search.py --oracle-only --mode compare --output runs/phase3-search-001
+```
+
+This mode constructs programs backward from the desired output type and compares
+exhaustive, bounded guided, and seeded random search with shared scoring and
+budgets. Each arm uses its own cold versioned caches. The default `--mode gate`
+preserves the Phase 2 command.
+
+All five arms currently select the 34/34 oracle workflow from two canonical
+programs. This verifies mechanics, not a guided-search advantage or model accuracy.
+See the [Phase 3 report](experiments/phase3-search-v1.md) for evidence, cache
+accounting, ranking rules, and the target paper's withdrawal status.

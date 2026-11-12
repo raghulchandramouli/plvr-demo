@@ -12,3 +12,13 @@ primitive_parameters:
   Match: [{}]
 useful_definition: success_on_every_admitted_fixture
 cost_metric: executed_oracle_primitive_invocations
+
+phase3:
+  limits:
+    layers: 2
+    operator_depth: 2
+    beam_width: 4
+    per_key_cap: 4
+    max_layer_plans: 20
+    max_candidates: 20
+  random_seeds: [0, 1, 2]
