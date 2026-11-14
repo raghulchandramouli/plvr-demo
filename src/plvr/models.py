@@ -51,7 +51,7 @@ def download() -> None:
         print(m.key, snapshot_download(m.repo, revision=m.revision), flush=True)
 
 
-def serve(key: str, concurrency: int) -> None:
+def serve(key: str, concurrency: int, cache_gb: float) -> None:
     m = MODELS[key]
     cmd = [
         sys.executable, "-m", "plvr.serve",
@@ -60,7 +60,7 @@ def serve(key: str, concurrency: int) -> None:
         "--max-tokens", "8192",
         "--decode-concurrency", str(concurrency),
         "--prompt-concurrency", str(concurrency),
-        "--prompt-cache-bytes", str(6 * 2**30),
+        "--prompt-cache-bytes", str(int(cache_gb * 2**30)),
         "--log-level", "WARNING",
     ]
     os.execvp(cmd[0], cmd)
@@ -73,11 +73,12 @@ def main() -> None:
     s = sub.add_parser("serve")
     s.add_argument("key", choices=sorted(MODELS))
     s.add_argument("--concurrency", type=int, default=4)
+    s.add_argument("--cache-gb", type=float, default=2.0)
     args = parser.parse_args()
     if args.cmd == "download":
         download()
     else:
-        serve(args.key, args.concurrency)
+        serve(args.key, args.concurrency, args.cache_gb)
 
 
 if __name__ == "__main__":

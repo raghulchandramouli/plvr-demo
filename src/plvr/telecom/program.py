@@ -287,11 +287,11 @@ class TelecomProgram:
                 )
             answer = self._call(P.DOES_CONDITION_HOLD, rule=text, reading=f"{rule.check}: {reading.text}").answer
         else:
-            met = self._call(P.IS_CONDITION_MET, condition=text, record=self._record_text(rule))
+            met = self._call(P.IS_CONDITION_MET, condition=text, record=self._record_text(rule, with_user_words=False))
             answer = met.answer
             if met.expression:
                 answer = "yes" if P.evaluate(met.expression) else "no"
-        if answer == "cannot tell":
+        if answer == "cannot tell" and not rule.escalate:
             answer = self._call(P.USER_PREMISE, condition=text, user_messages="\n".join(self.user_words)).answer
         return answer == "yes"
 
@@ -445,7 +445,7 @@ class TelecomProgram:
             return False
         return self._call(P.REPLY_TO_CONFIRMATION, question=self.previous_agent, user_message=self.latest_user).answer == "no"
 
-    def _record_text(self, rule: Rule | None = None) -> str:
+    def _record_text(self, rule: Rule | None = None, with_user_words: bool = True) -> str:
         parts = [self.compiled.preamble]
         if rule is not None:
             parts += [f"## {t}\n{self.compiled.procedures[t]}" for t in rule.procedures]
@@ -454,7 +454,8 @@ class TelecomProgram:
         if self.line:
             parts.append(f"line: {P.dumps(self.line)}")
         parts += self.records[-6:]
-        parts.append("user said: " + " | ".join(self.user_words))
+        if with_user_words:
+            parts.append("user said: " + " | ".join(self.user_words))
         return "\n".join(parts)[-MAX_INPUT_CHARS:]
 
     def _facts(self) -> str:

@@ -28,6 +28,18 @@ def task_file(out_dir: Path, task_id: str) -> Path:
     return out_dir / f"{hashlib.sha1(task_id.encode()).hexdigest()[:12]}.json"
 
 
+class ServerDown(RuntimeError):
+    """A model server stopped answering. The run stops instead of scoring tasks it never really ran."""
+
+
+def check_servers(*servers: Server) -> None:
+    for server in servers:
+        try:
+            server.complete("ping", max_tokens=1, temperature=0.0)
+        except Exception as error:
+            raise ServerDown(f"{server.model.key} at {server.model.api_base} is not answering: {error}") from error
+
+
 def run_task(task: Task, arm: str, student: Server, runner: Server, user_key: str, out_dir: Path) -> float:
     errors: list[str] = []
     for _ in range(MAX_ATTEMPTS):
@@ -35,6 +47,7 @@ def run_task(task: Task, arm: str, student: Server, runner: Server, user_key: st
         if "error" not in record:
             break
         errors.append(record.pop("error"))
+        check_servers(student, runner, Server(MODELS[user_key]))
     else:
         record |= {"reward": 0.0, "termination_reason": "infrastructure_error"}
     record["failed_attempts"] = errors
@@ -100,10 +113,16 @@ def main() -> None:
     student, runner = Server(MODELS[args.student]), Server(MODELS[PRIMITIVE_RUNNER])
     todo = [t for t in tasks.load(args.task_set, args.limit) if not task_file(args.out, t.id).exists()]
     print(f"{len(todo)} tasks to run into {args.out}", flush=True)
+    check_servers(student, runner, Server(MODELS[args.user]))
     with ThreadPoolExecutor(args.concurrency) as pool:
         futures = {pool.submit(run_task, t, args.arm, student, runner, args.user, args.out): t for t in todo}
         for done, future in enumerate(as_completed(futures), 1):
-            print(f"[{done}/{len(todo)}] reward={future.result()} {futures[future].id}", flush=True)
+            try:
+                print(f"[{done}/{len(todo)}] reward={future.result()} {futures[future].id}", flush=True)
+            except ServerDown as error:
+                print(f"STOPPED: {error}", flush=True)
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise SystemExit(1)
 
 
 if __name__ == "__main__":
