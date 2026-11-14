@@ -119,8 +119,8 @@ def _first_json_object(text: str) -> Any:
 
 
 def verbatim(quote: str | None, source: str) -> bool:
-    """True when the quote appears in the source, ignoring case, runs of whitespace, and Markdown emphasis marks."""
+    """True when the quote appears in the source, ignoring case, whitespace runs, quote and emphasis marks, and end punctuation."""
     if not quote:
         return False
-    squash = lambda s: re.sub(r"\s+", " ", re.sub(r"[*`]", "", s)).strip().lower()
-    return squash(quote) in squash(source)
+    squash = lambda s: re.sub(r"\s+", " ", re.sub(r"[*`\"'“”‘’]", "", s)).strip().lower()
+    return squash(quote).rstrip(".,;:!? ") in squash(source)

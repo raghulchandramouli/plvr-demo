@@ -353,8 +353,10 @@ class TelecomProgram:
         p = self.proc
         index, title = p["rule"], p["title"]
         text = "\n\n".join(f"## {t}\n{self.compiled.procedures[t]}" for t in title.split(" or "))
-        effect = self._pick(f"The function that makes the change this policy describes:\n{text}")
-        made = any(name == effect and not error for name, _, error in self.executed[p["start"] :])
+        actions = [f"{n}({P.dumps(a)})" for n, a, error in self.executed[p["start"] :] if not error]
+        made = bool(actions) and self._call(
+            P.REQUEST_ACHIEVED, policy_section=text, actions="\n".join(r for r in self.records if any(r.startswith(a) for a in actions))
+        ).achieved == "yes"
         if made:
             p["after"] += 1
         finished = made and p["after"] > 1
@@ -484,6 +486,10 @@ class TelecomProgram:
         parts.append(f"Why: {step.why}")
         parts.append(f"Next: {step.instruction}")
         parts.append(ACTION_FORM[step.action])
+        parts.append(
+            f"The only tools I can call are: {', '.join(self.compiled.agent_functions)}. "
+            "Every other function runs on the user's phone, so I must ask the user to run it and never call it myself."
+        )
         return "\n\n".join(parts)
 
 

@@ -112,6 +112,11 @@ class Price(BaseModel):
     unit_price_quote: str | None = None
 
 
+class Achieved(BaseModel):
+    evidence: str | None = None
+    achieved: Tri
+
+
 class Confirmation(BaseModel):
     answer: Literal["yes", "no", "unclear"]
 
@@ -336,7 +341,7 @@ USER_PREMISE = Primitive(
         "Decide whether the user's own words in USER_MESSAGES show that the CONDITION is true of them. "
         "Copy the words that show it as evidence."
     ),
-    form='{"answer": "yes" | "no" | "cannot tell", "evidence": "<copied words>" | null}',
+    form='{"evidence": "<copied words>" | null, "answer": "yes" | "no" | "cannot tell"}',
     output=Shows,
     verify=lambda o, i: _evidence(o.answer, o.evidence, i["user_messages"]),
     fallback=lambda i: Shows(answer="cannot tell"),
@@ -366,7 +371,7 @@ DOES_READING_SHOW = Primitive(
         'Answer "yes" if it shows the condition holds, "no" if it shows the condition does not hold, '
         '"cannot tell" if the reading says nothing about it. Copy the words of the READING that decide it.'
     ),
-    form='{"answer": "yes" | "no" | "cannot tell", "evidence": "<copied words>" | null}',
+    form='{"evidence": "<copied words>" | null, "answer": "yes" | "no" | "cannot tell"}',
     output=Shows,
     verify=lambda o, i: _evidence(o.answer, o.evidence, i["reading"]),
     fallback=lambda i: Shows(answer="cannot tell"),
@@ -379,7 +384,7 @@ DOES_CONDITION_HOLD = Primitive(
         "The READING was taken with the function the rule names. Decide whether the CONDITION holds now. "
         "Copy the words of the READING that decide it."
     ),
-    form='{"answer": "yes" | "no" | "cannot tell", "evidence": "<copied words>" | null}',
+    form='{"evidence": "<copied words>" | null, "answer": "yes" | "no" | "cannot tell"}',
     output=Shows,
     verify=lambda o, i: _evidence(o.answer, o.evidence, i["reading"]),
     fallback=lambda i: Shows(answer="cannot tell"),
@@ -406,7 +411,7 @@ IS_CONDITION_MET = Primitive(
         'EXPRESSION using values copied from the RECORD (for example "12.5 > 10" or "\'2025-01-31\' < \'2025-02-25\'"). '
         "Otherwise copy the deciding words as evidence."
     ),
-    form='{"expression": "<numbers and > < >= <= == + - * />" | null, "answer": "yes" | "no" | "cannot tell", "evidence": "<copied words>" | null}',
+    form='{"evidence": "<copied words>" | null, "expression": "<values and > < >= <= == + - * />" | null, "answer": "yes" | "no" | "cannot tell"}',
     output=Met,
     verify=_verify_met,
     fallback=lambda i: Met(answer="cannot tell"),
@@ -419,7 +424,7 @@ ALREADY_AS_WANTED = Primitive(
         "The FIX would change a setting to the state its rule wants. Decide from the READING whether the setting is "
         "already in that wanted state. Copy the deciding words of the READING."
     ),
-    form='{"already": "yes" | "no" | "cannot tell", "evidence": "<copied words>" | null}',
+    form='{"evidence": "<copied words>" | null, "already": "yes" | "no" | "cannot tell"}',
     output=AlreadyWanted,
     verify=lambda o, i: _evidence(o.already, o.evidence, i["reading"]),
     fallback=lambda i: AlreadyWanted(already="cannot tell"),
@@ -432,7 +437,7 @@ PROBLEM_FIXED = Primitive(
         "Decide whether the READING of the problem's check shows the problem is solved, judged by the POLICY_CRITERION "
         "and by what the user said they need in USER_GOAL. Copy the deciding words of the READING."
     ),
-    form='{"fixed": "yes" | "no" | "cannot tell", "evidence": "<copied words>" | null}',
+    form='{"evidence": "<copied words>" | null, "fixed": "yes" | "no" | "cannot tell"}',
     output=Fixed,
     verify=lambda o, i: _evidence(o.fixed, o.evidence, i["reading"]),
     fallback=lambda i: Fixed(fixed="cannot tell"),
@@ -490,6 +495,19 @@ PRICE_TERMS = Primitive(
     verify=_verify_price,
     fallback=lambda i: Price(quantity=None, unit_price=None),
     max_tokens=150,
+)
+
+REQUEST_ACHIEVED = Primitive(
+    name="Is the request achieved",
+    group="finishing",
+    instruction=(
+        "The POLICY_SECTION describes a change to make for the user. ACTIONS lists the calls the agent made since starting it, "
+        "with their results. Decide whether those actions have made the change the section is for. Copy the deciding words of ACTIONS."
+    ),
+    form='{"evidence": "<copied words>" | null, "achieved": "yes" | "no" | "cannot tell"}',
+    output=Achieved,
+    verify=lambda o, i: _evidence(o.achieved, o.evidence, i["actions"]),
+    fallback=lambda i: Achieved(achieved="cannot tell"),
 )
 
 REPLY_TO_CONFIRMATION = Primitive(

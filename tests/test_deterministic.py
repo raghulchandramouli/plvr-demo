@@ -91,3 +91,8 @@ def test_expression_must_use_numbers_from_the_record():
     met = run(P.IS_CONDITION_MET, Context(), condition="usage exceeds limit", record='{"data_used_gb": 15.2, "data_limit_gb": 15}')
     assert met.answer == "cannot tell"
     assert "16" in run.calls[-1].rejection
+
+
+def test_verbatim_ignores_quote_marks_and_end_punctuation():
+    assert verbatim('cellular connection shows no_service.', 'my cellular connection shows "no_service" and')
+    assert verbatim("Data Saver mode is off", "Data Saver mode is OFF.")
