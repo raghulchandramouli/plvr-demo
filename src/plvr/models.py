@@ -54,7 +54,7 @@ def download() -> None:
 def serve(key: str, concurrency: int) -> None:
     m = MODELS[key]
     cmd = [
-        sys.executable, "-m", "mlx_lm", "server",
+        sys.executable, "-m", "plvr.serve",
         "--model", m.path(),
         "--port", str(m.port),
         "--max-tokens", "8192",
