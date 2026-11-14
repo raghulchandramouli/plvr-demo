@@ -1,7 +1,0 @@
-smoke_version: smoke-v1
-examples: 30
-max_tool_calls: 6
-example_timeout_seconds: 120
-process_memory_budget_bytes: 34359738368
-artifact_budget_bytes: 53687091200
-minimum_free_disk_bytes: 1073741824
