@@ -114,6 +114,7 @@ def main() -> None:
     todo = [t for t in tasks.load(args.task_set, args.limit) if not task_file(args.out, t.id).exists()]
     print(f"{len(todo)} tasks to run into {args.out}", flush=True)
     check_servers(student, runner, Server(MODELS[args.user]))
+    student.tokenizer, runner.tokenizer  # load once here: a lazy transformers import raced across worker threads
     with ThreadPoolExecutor(args.concurrency) as pool:
         futures = {pool.submit(run_task, t, args.arm, student, runner, args.user, args.out): t for t in todo}
         for done, future in enumerate(as_completed(futures), 1):
