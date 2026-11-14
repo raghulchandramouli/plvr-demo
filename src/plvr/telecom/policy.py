@@ -15,7 +15,7 @@ from pathlib import Path
 from plvr.primitive import Context, Runner
 from plvr.telecom import primitives as P
 
-COMPILE_VERSION = 1
+COMPILE_VERSION = 3
 CACHE_DIR = Path("runs/cache")
 _lock = threading.Lock()
 
@@ -42,6 +42,7 @@ class Rule:
     procedures: list[str] = field(default_factory=list)
     then: list[str] = field(default_factory=list)
     reader: str | None = None
+    policy: str = ""
 
 
 @dataclass
@@ -56,11 +57,12 @@ class Area:
 @dataclass
 class Compiled:
     areas: dict[str, Area]
-    procedures: dict[str, list[str]]
+    procedures: dict[str, str]
     device_functions: list[str]
     agent_functions: list[str]
     descriptions: dict[str, str]
     rejected: list[str]
+    preamble: str
 
     def checklist(self, area_title: str) -> list[Rule]:
         """Rules of the area's prerequisites first, then its own, in written order, without repeats."""
@@ -140,18 +142,6 @@ def device_functions(policy: str, agent_functions: list[str]) -> dict[str, str]:
     return found
 
 
-def bullet_steps(body: str) -> list[str]:
-    steps: list[str] = []
-    for line in body.splitlines():
-        if re.match(r"^[-*]\s+", line):
-            steps.append(re.sub(r"^[-*]\s+", "", line).strip())
-        elif re.match(r"^\s+[-*]\s+", line) and steps:
-            steps[-1] += " " + re.sub(r"^\s+[-*]\s+", "", line).strip()
-    if not steps:
-        steps = [s.strip() for s in re.split(r"(?<=[.!?])\s+", " ".join(body.split())) if s.strip()]
-    return steps
-
-
 def compile_policy(policy: str, tools: list, runner: Runner) -> Compiled:
     key = hashlib.sha256(
         (policy + Path(P.__file__).read_text() + Path(__file__).read_text() + str(COMPILE_VERSION)).encode()
@@ -182,7 +172,8 @@ def _compile(policy: str, tools: list, run: Runner) -> Compiled:
     known = sorted(descriptions)
     rejected: list[str] = []
 
-    procedures = {s.title: bullet_steps(s.body) for s in sections if s.part == "main" and s.level >= 2 and s.body}
+    procedures = {s.title: s.body for s in sections if s.part == "main" and s.level >= 2 and s.body}
+    preamble = next((s.body for s in sections if s.part == "main" and s.level == 1), "")
     tops = [s for s in sections if s.part == "tech" and s.level == 1]
 
     areas: dict[str, Area] = {}
@@ -226,7 +217,7 @@ def _compile(policy: str, tools: list, run: Runner) -> Compiled:
                 rule.reader = rule.check or _pick(
                     run, ctx, f"Read the current state of the setting that {rule.fix} changes.", reads, rule.fix
                 )
-    return Compiled(areas, procedures, sorted(device), sorted(agent), descriptions, rejected)
+    return Compiled(areas, procedures, sorted(device), sorted(agent), descriptions, rejected, preamble)
 
 
 def _pick(run: Runner, ctx: Context, goal: str, functions: dict[str, str], exclude: str | None) -> str | None:
@@ -240,7 +231,7 @@ def _rules_of(run, ctx, top, s, governed, agent, procedures, rejected) -> list[R
         return []
     parts = []
     for part in run(P.COPY_RULE_CONDITION, ctx, section=text, functions=governed).rules:
-        if part.check and part.check == part.fix:
+        if part.check and (part.check == part.fix or part.check not in governed):
             part = part.model_copy(update={"check": None})
         part = part.model_copy(update={"fix_arguments": P.quoted_arguments(part.fix_arguments, text)})
         if problem := P.rule_problem(part, text, governed):
@@ -257,10 +248,10 @@ def _rules_of(run, ctx, top, s, governed, agent, procedures, rejected) -> list[R
         ).about_this_action:
             rules[-1].then.append(part.fix)
             continue
-        rule = Rule(top.title, s.title, part.condition, part.check, part.fix, part.fix_arguments, part.escalate)
+        rule = Rule(top.title, s.title, part.condition, part.check, part.fix, part.fix_arguments, part.escalate, policy=text)
+        if defers_to_policy and not rule.escalate:
+            rule.procedures = run(P.PLAN_STEPS, ctx, rule=text, procedure_titles=list(procedures)).procedures
         if rule.fix is None and not rule.escalate:
-            if defers_to_policy:
-                rule.procedures = run(P.PLAN_STEPS, ctx, rule=text, procedure_titles=list(procedures)).procedures
             if not rule.procedures:
                 rejected.append(f"{s.title}: '{part.condition}' names no fix and defers to no procedure")
                 continue

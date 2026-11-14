@@ -56,7 +56,12 @@ def _attempt(task: Task, arm: str, student: Server, runner: Server, user_key: st
         env,
         task,
         llm=f"openai/{user_model.path()}",
-        llm_args={"api_base": user_model.api_base, "api_key": "local", "temperature": 0.0},
+        llm_args={
+            "api_base": user_model.api_base,
+            "api_key": "local",
+            "temperature": 0.0,
+            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+        },
     )
     orchestrator = Orchestrator(
         domain=tasks.DOMAIN, agent=agent, user=user, environment=env, task=task,

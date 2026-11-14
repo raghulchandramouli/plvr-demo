@@ -70,7 +70,6 @@ class Value(BaseModel):
 
 class Report(BaseModel):
     function: str
-    performed: bool
     result: str | None = None
 
 
@@ -143,13 +142,18 @@ _COMPARE = {ast.Gt: operator.gt, ast.GtE: operator.ge, ast.Lt: operator.lt, ast.
 _ARITH = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv}
 
 
+_ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
 def evaluate(expression: str) -> float | bool:
-    """Evaluate arithmetic and comparisons over number literals only; anything else raises ValueError."""
+    """Evaluate arithmetic and comparisons over number and 'YYYY-MM-DD' literals only; anything else raises ValueError."""
 
     def ev(node: ast.AST) -> Any:
         if isinstance(node, ast.Expression):
             return ev(node.body)
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and _ISO_DATE.fullmatch(node.value):
             return node.value
         if isinstance(node, ast.BinOp) and type(node.op) in _ARITH:
             return _ARITH[type(node.op)](ev(node.left), ev(node.right))
@@ -191,9 +195,10 @@ FUNCTIONS_GOVERNED = Primitive(
 )
 
 def rule_problem(rule: RuleParts, section: str, functions: list[str]) -> str | None:
+    """A rule needs a verbatim condition and a real fix. An unknown check is cleared at compile time, not rejected."""
     if not verbatim(rule.condition, section):
         return f"condition {rule.condition!r} not verbatim in section"
-    return _all_in([n for n in (rule.check, rule.fix) if n], functions)
+    return _all_in([rule.fix] if rule.fix else [], functions)
 
 
 def quoted_arguments(arguments: dict[str, Any], section: str) -> dict[str, Any]:
@@ -214,6 +219,8 @@ COPY_RULE_CONDITION = Primitive(
         "List every rule in this policy SECTION of the form \"if <condition>, do <action>\", in the order written. "
         "A sentence of the form \"after <action>, do <action>\" is a rule of its own: list it with the earlier action as its condition. "
         "A rule must tell the agent what to do. Skip sentences that only list possible causes or describe what a check returns. "
+        "When the section tells the agent to check something and refers to the general policy for what to do if it is not as it "
+        "should be, that is a rule too: copy what to check as its CONDITION and leave FIX null. "
         "For each rule: "
         "CONDITION: copy the words that state when it applies. "
         "CHECK: the read-only function from FUNCTIONS whose result shows the condition, or null if the rule names none. "
@@ -311,13 +318,13 @@ DEVICE_REPLY = Primitive(
     name="Device reply",
     group="understanding the message",
     instruction=(
-        "The agent asked the user to use functions on their device. For each function in ASKED, say whether the "
-        "USER_MESSAGE reports that the user used it, and copy the words of the USER_MESSAGE that give its result. "
-        "Also report any other function from DEVICE_FUNCTIONS whose result the USER_MESSAGE gives."
+        "The agent asked the user to use the functions in ASKED on their phone, and the USER_MESSAGE is the user's answer. "
+        "For each function in ASKED, copy the words of the USER_MESSAGE that tell what the user saw or did with it. "
+        "The user usually does not name the function; match by what the function does. Use null if the message does not say."
     ),
-    form='{"reports": [{"function": "<name>", "performed": true | false, "result": "<copied words>" | null}]}',
+    form='{"reports": [{"function": "<name from ASKED>", "result": "<copied words>" | null}]}',
     output=DeviceReply,
-    verify=lambda o, i: _all_in([r.function for r in o.reports], i["device_functions"])
+    verify=lambda o, i: _all_in([r.function for r in o.reports], i["asked"])
     or next((f"result for {r.function} not verbatim" for r in o.reports if r.result and not verbatim(r.result, i["user_message"])), None),
     fallback=lambda i: DeviceReply(reports=[]),
 )
@@ -395,8 +402,9 @@ IS_CONDITION_MET = Primitive(
     name="Is the condition met",
     group="checking the policy",
     instruction=(
-        "Decide whether the CONDITION is met by the RECORD. If deciding needs a comparison of numbers, write it as an "
-        'EXPRESSION using numbers copied from the RECORD (for example "12.5 > 10"). Otherwise copy the deciding words as evidence.'
+        "Decide whether the CONDITION is met by the RECORD. If deciding needs a comparison of numbers or dates, write it as an "
+        'EXPRESSION using values copied from the RECORD (for example "12.5 > 10" or "\'2025-01-31\' < \'2025-02-25\'"). '
+        "Otherwise copy the deciding words as evidence."
     ),
     form='{"expression": "<numbers and > < >= <= == + - * />" | null, "answer": "yes" | "no" | "cannot tell", "evidence": "<copied words>" | null}',
     output=Met,
