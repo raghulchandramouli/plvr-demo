@@ -85,14 +85,23 @@ class Shows(BaseModel):
     evidence: str | None = None
 
 
+class Compare(BaseModel):
+    """Two short copied states and whether they match; the yes/no answer is derived, not asked for."""
+
+    state_rule_names: str | None = None
+    state_in_reading: str | None = None
+    same: bool | None = None
+
+    @property
+    def answer(self) -> Tri:
+        if not self.state_in_reading or self.same is None:
+            return "cannot tell"
+        return "yes" if self.same else "no"
+
+
 class Met(BaseModel):
     expression: str | None = None
     answer: Tri
-    evidence: str | None = None
-
-
-class AlreadyWanted(BaseModel):
-    already: Tri
     evidence: str | None = None
 
 
@@ -363,31 +372,39 @@ WHERE_VALUE = Primitive(
 
 # ---------------------------------------------------------------- troubleshooting conditions (run time)
 
+def _verify_compare(o: Compare, i: dict) -> str | None:
+    if o.state_in_reading and not verbatim(o.state_in_reading, i["reading"]):
+        return "state_in_reading not verbatim in reading"
+    if o.state_rule_names and not verbatim(o.state_rule_names, i["rule"] + "\n" + i["rule_text"]):
+        return "state_rule_names not verbatim in rule"
+    return None
+
+
+_COMPARE_STEPS = (
+    "STATE_RULE_NAMES: copy from RULE the state it looks for (for example \"Missing\" or \"Airplane Mode is ON\"). "
+    "STATE_IN_READING: copy from READING what it shows for that same setting, or null if READING does not mention it. "
+    "SAME: true if the two name the same state, false if they name different states. RULE_TEXT is the policy section, for context."
+)
+_COMPARE_FORM = '{"state_rule_names": "<copied words>", "state_in_reading": "<copied words>" | null, "same": true | false | null}'
+
 DOES_READING_SHOW = Primitive(
     name="Does one reading show the condition",
     group="troubleshooting conditions",
-    instruction=(
-        "A READING is the result of one function. Decide whether this READING is enough to tell if the CONDITION holds. "
-        'Answer "yes" if it shows the condition holds, "no" if it shows the condition does not hold, '
-        '"cannot tell" if the reading says nothing about it. Copy the words of the READING that decide it.'
-    ),
-    form='{"evidence": "<copied words>" | null, "answer": "yes" | "no" | "cannot tell"}',
-    output=Shows,
-    verify=lambda o, i: _evidence(o.answer, o.evidence, i["reading"]),
-    fallback=lambda i: Shows(answer="cannot tell"),
+    instruction="A READING from one function may also show the state a RULE looks for. " + _COMPARE_STEPS,
+    form=_COMPARE_FORM,
+    output=Compare,
+    verify=_verify_compare,
+    fallback=lambda i: Compare(),
 )
 
 DOES_CONDITION_HOLD = Primitive(
     name="Does the condition hold now",
     group="troubleshooting conditions",
-    instruction=(
-        "The READING was taken with the function the rule names. Decide whether the CONDITION holds now. "
-        "Copy the words of the READING that decide it."
-    ),
-    form='{"evidence": "<copied words>" | null, "answer": "yes" | "no" | "cannot tell"}',
-    output=Shows,
-    verify=lambda o, i: _evidence(o.answer, o.evidence, i["reading"]),
-    fallback=lambda i: Shows(answer="cannot tell"),
+    instruction="The READING was taken with the function the RULE names. " + _COMPARE_STEPS,
+    form=_COMPARE_FORM,
+    output=Compare,
+    verify=_verify_compare,
+    fallback=lambda i: Compare(),
 )
 
 
@@ -421,13 +438,14 @@ ALREADY_AS_WANTED = Primitive(
     name="Is the setting already as wanted",
     group="troubleshooting conditions",
     instruction=(
-        "The FIX would change a setting to the state its rule wants. Decide from the READING whether the setting is "
-        "already in that wanted state. Copy the deciding words of the READING."
+        "The RULE's fix changes a setting. STATE_RULE_NAMES: copy from RULE_TEXT the state the fix should leave the setting in "
+        "(for example \"OFF\" or \"Data Roaming is ON\"). STATE_IN_READING: copy from READING what it shows for that setting now, "
+        "or null if READING does not mention it. SAME: true if the setting is already in the state the fix wants."
     ),
-    form='{"evidence": "<copied words>" | null, "already": "yes" | "no" | "cannot tell"}',
-    output=AlreadyWanted,
-    verify=lambda o, i: _evidence(o.already, o.evidence, i["reading"]),
-    fallback=lambda i: AlreadyWanted(already="cannot tell"),
+    form=_COMPARE_FORM,
+    output=Compare,
+    verify=_verify_compare,
+    fallback=lambda i: Compare(),
 )
 
 PROBLEM_FIXED = Primitive(

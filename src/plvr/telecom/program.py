@@ -285,7 +285,9 @@ class TelecomProgram:
                 return self._agent_call(
                     rule.check, f"Read {rule.check} for the user's line.", f"Read the current state for the rule {text!r}.", index
                 )
-            answer = self._call(P.DOES_CONDITION_HOLD, rule=text, reading=f"{rule.check}: {reading.text}").answer
+            answer = self._call(
+                P.DOES_CONDITION_HOLD, rule=text, rule_text=rule.policy, reading=f"{rule.check}: {reading.text}"
+            ).answer
         else:
             met = self._call(P.IS_CONDITION_MET, condition=text, record=self._record_text(rule, with_user_words=False))
             answer = met.answer
@@ -302,7 +304,9 @@ class TelecomProgram:
             if r.function != rule.check and r.turn >= self.last_fix_turn and re.search(rf"\b{r.function}\b", rule.policy)
         ]
         for reading in sorted(fresh, key=lambda r: -r.turn)[:2]:
-            answer = self._call(P.DOES_READING_SHOW, condition=condition, reading=f"{reading.function}: {reading.text}").answer
+            answer = self._call(
+                P.DOES_READING_SHOW, rule=condition, rule_text=rule.policy, reading=f"{reading.function}: {reading.text}"
+            ).answer
             if answer != "cannot tell":
                 return answer == "yes"
         return None
@@ -316,8 +320,11 @@ class TelecomProgram:
         current = self._fresh(reader) if reader else None
         if current is not None:
             already = self._call(
-                P.ALREADY_AS_WANTED, fix=f"{rule.fix}: [{rule.section}] {rule.condition}", reading=f"{reader}: {current.text}"
-            ).already
+                P.ALREADY_AS_WANTED,
+                rule=f"{rule.fix}: [{rule.section}] {rule.condition}",
+                rule_text=rule.policy,
+                reading=f"{reader}: {current.text}",
+            ).answer
             if already == "yes":
                 self.status[index] = "already in place"
                 return None
