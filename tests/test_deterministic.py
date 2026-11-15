@@ -105,3 +105,13 @@ def test_one_word_state_matches_by_token_without_negation():
     assert P.Compare(state_rule_names="Missing", state_in_reading="active", same=False).answer == "no"
     assert P.Compare(state_rule_names="Data Saver mode is ON", state_in_reading="Data Saver mode is ON now", same=False).answer == "no"
     assert P.Compare(state_rule_names="ON", state_in_reading=None, same=True).answer == "cannot tell"
+
+
+def test_a_copied_reading_must_name_what_the_rule_is_about():
+    from plvr.telecom.program import _about
+
+    airplane = Rule("MMS", "Airplane Mode", "If it is ON, guide the user to use toggle_airplane_mode() to turn it OFF.", None, None, {}, False)
+    assert not _about(airplane, "connected to a 2G network with poor signal. Mobile data is on")
+    assert _about(airplane, "Airplane Mode: OFF")
+    network = Rule("MMS", "Optimizing Network Mode Preferences", 'If check_network_mode_preference() shows "2G" or "3G"', None, None, {}, False)
+    assert _about(network, "2g_only")

@@ -316,7 +316,7 @@ class TelecomProgram:
             compared = self._call(
                 P.DOES_CONDITION_HOLD, rule=rule.condition, rule_text=rule.policy, reading=f"{rule.check}: {reading.text}"
             )
-            answer = compared.answer
+            answer = compared.answer if _about(rule, compared.state_in_reading) else "cannot tell"
             if rule.escalate and answer == "yes" and not verbatim(compared.state_rule_names, reading.text):
                 answer = "no"  # a transfer ends the conversation, so the state it rests on must be written in the reading
             if answer != "cannot tell":
@@ -341,13 +341,15 @@ class TelecomProgram:
         current = self._fresh(reader) if reader else None
         if current is None:
             return None
-        answer = self._call(
+        compared = self._call(
             P.ALREADY_AS_WANTED,
             rule=f"{rule.fix}: {rule.fixed_state or rule.condition}",
             rule_text=rule.policy,
             reading=f"{reader}: {current.text}",
-        ).answer
-        return None if answer == "cannot tell" else answer == "yes"
+        )
+        if compared.answer == "cannot tell" or not _about(rule, compared.state_in_reading):
+            return None
+        return compared.answer == "yes"
 
     def _shown_by_other_readings(self, rule: Rule, condition: str) -> bool | None:
         """A fresh reading of another function counts only when the rule's own policy section names that function."""
@@ -545,6 +547,15 @@ class TelecomProgram:
             "Every other function runs on the user's phone, so I must ask the user to run it and never call it myself."
         )
         return "\n\n".join(parts)
+
+
+_NOT_A_SUBJECT = {"is", "are", "the", "a", "an", "it", "on", "off", "yes", "no", "not", "to", "of", "and", "or", "if", "shows", "turn", "use", "user", "guide"}
+
+
+def _about(rule: Rule, copied: str | None) -> bool:
+    """A copied reading counts for a rule only if it names something the rule is about, not just a state word like "on"."""
+    words = lambda text: {w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 1} - _NOT_A_SUBJECT
+    return bool(words(copied) & words(f"{rule.section} {rule.condition} {rule.fixed_state or ''}"))
 
 
 def _digits(text: str) -> str:
