@@ -1,34 +1,54 @@
-# Status: paused on 2026-11-15
+# Status
 
-The user paused all work. Nothing is running.
+## Program frozen on 2026-11-15
 
-## Where things stand
+The program and every primitive prompt are frozen at the git tag `program-frozen-v1`.
+No program or primitive code changes after this tag for the test runs.
+`compiled-checklist.txt` is the checklist the frozen program compiled from the τ² policy.
 
-- **Plain Qwen3-8B on the 40 test tasks.** 3 of 40 finished (1 solved), saved in `runs/test/vanilla-qwen3-8b/`. The 2 tasks in flight were lost and rerun on resume. Their conversations have not been read, as the pre-registration requires.
-- **Program.** Not frozen. On dev tasks with the real 30B customer it solved 1 of 2 before the pause. The failure was Qwen3-8B judging "The SIM card is active" as meeting "shows Locked", which triggered a wrong transfer.
-- **Last change, untested.** The condition primitives now copy the state the rule looks for and the state the reading shows, then compare them (`Compare` in `src/plvr/telecom/primitives.py`). It has not run yet. The probe that was about to test it failed on a bug in the probe script itself (a section-name lookup), not in the primitive.
-- **Downloads.** Qwen3-8B and Qwen3-30B are complete. Qwen3-4B and Qwen3-14B are not.
+## Development record before the freeze
 
-## How to resume
+All development used dev tasks (`full` minus `base`), never test tasks.
 
-Start both servers. Each needs its own terminal or background job.
+| Round | Customer model | Solved | What the failures taught |
+| --- | --- | --- | --- |
+| Stand-in runs 1–4 | Qwen3-8B (stand-in) | 0 of 6 | Harness and program bugs; the stand-in customer confused its role. |
+| Round 1 | Qwen3-30B | 1 of 2 | A flipped yes/no judgement escalated an active SIM as "Locked". |
+| Round 2 | Qwen3-30B | 1 of 2 | Healthy-state check misread "Mobile Data Disabled"; "2g_only" not matched to "2G"; transfer when the checklist ran out. |
+| Round 3 | Qwen3-30B | 1 of 4 (5th stopped at the freeze) | A section heading taken as a state; the customer invented a test result; toggles fired on readings that did not mention the setting. |
+
+The condition probe (`scripts/probe_conditions.py`) scores 16 of 19 at the freeze.
+Its three errors either cost extra turns or are caught by the second pass.
+
+## Test runs: finished on 2026-11-15
+
+Both arms ran all 40 test tasks with Qwen3-8B as the student.
+Vanilla solved 7 (17.5%) and the program solved 20 (50.0%). See `results.md`.
+The audit found no task scored 0 for an infrastructure reason.
+
+## How to resume after a stop
+
+Start both servers, each in its own terminal or background job.
 
 ```bash
-.venv/bin/python -m plvr.models serve qwen3-8b --concurrency 3
+.venv/bin/python -m plvr.models serve qwen3-8b
 ```
 
 ```bash
-.venv/bin/python -m plvr.models serve qwen3-30b-a3b-instruct --concurrency 3
+.venv/bin/python -m plvr.models serve qwen3-30b-a3b-instruct
 ```
 
-Continue the plain run. It skips the tasks already finished.
+Rerun the same `plvr.run` command. It skips tasks already finished.
+
+```bash
+.venv/bin/python -m plvr.run --arm program --student qwen3-8b --task-set test --concurrency 2 --out runs/test/program-qwen3-8b
+```
 
 ```bash
 .venv/bin/python -m plvr.run --arm vanilla --student qwen3-8b --task-set test --concurrency 2 --out runs/test/vanilla-qwen3-8b
 ```
 
-Then test the new condition primitive on the cases that failed, rerun the program on dev tasks, and freeze it with a git tag before its test run.
-
 ## Known limits on this Mac
 
-Two servers plus 3 conversations fit in memory only with the per-server budgets in `src/plvr/serve.py`. Keep the total at 3 conversations or fewer.
+Two servers plus 2 conversations fit in GPU memory with the per-server budgets in `src/plvr/serve.py`.
+Three conversations ran out of Metal memory twice.

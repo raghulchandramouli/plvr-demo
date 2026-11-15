@@ -13,7 +13,7 @@ from typing import Any, Literal
 from tau2.data_model.message import AssistantMessage, ToolMessage, UserMessage
 
 from plvr.llm import Server
-from plvr.primitive import MAX_INPUT_CHARS, Context, Primitive, Runner
+from plvr.primitive import MAX_INPUT_CHARS, Context, Primitive, Runner, verbatim
 from plvr.telecom import primitives as P
 from plvr.telecom.policy import Rule, compile_policy
 
@@ -80,7 +80,7 @@ class TelecomProgram:
         self.status: dict[int, str] = {}
         self.attempts: Counter[int] = Counter()
         self.procedures_done: set[int] = set()
-        self.decided_by_reading: set[int] = set()
+        self.decided_by: dict[int, str] = {}
         self.passes = 1
         self.last_fix_turn = 0
         self.proc: dict | None = None
@@ -178,6 +178,8 @@ class TelecomProgram:
         step = self.last_step
         fix = self.checklist[step.rule].fix if step and step.rule is not None else None
         for report in reports:
+            if report.result and not verbatim(report.result, message):
+                continue
             if report.result:
                 self.readings[report.function] = Reading(report.function, report.result, self.turn)
                 self.unreadable.discard(report.function)
@@ -235,7 +237,7 @@ class TelecomProgram:
         """re-run the rules' success check; stop when it passes: walk the rules again on fresh readings before escalating"""
         self.passes += 1
         self.status = {i: s for i, s in self.status.items() if s not in ("not needed", "already in place")}
-        self.decided_by_reading.clear()
+        self.decided_by.clear()
         self.last_fix_turn = self.turn + 1
         return self._decide()
 
@@ -267,9 +269,21 @@ class TelecomProgram:
 
     def _rule_step(self, index: int, rule: Rule) -> Step | None:
         """for each rule of the form "if <condition>, apply <fix>"; go through them in their written order"""
+        if self.passes > 1 and self._repeatable_fix(rule):
+            # The manual says to try every way to resolve the issue before transferring, and this fix is safe to repeat.
+            return self._device_fix(index, rule)
         holds = self._holds(index, rule)
         if isinstance(holds, Step):
             return holds
+        if self.decided_by.get(index) == "reading" and rule.fix in self.compiled.device_functions and not rule.escalate:
+            in_place = self._already_in_place(rule)
+            if rule.fixed_state:
+                # The policy names the state the fix leaves, and a wrong toggle breaks a working setting: trust that comparison.
+                if in_place is not None:
+                    holds = not in_place
+            else:
+                # The fix is safe to repeat, and a missed fix fails the task: apply it when either check finds a problem.
+                holds = holds or in_place is False
         if not holds:
             self.status[index] = "not needed"
             return None
@@ -292,18 +306,21 @@ class TelecomProgram:
             if reading is None:
                 shown = self._shown_by_other_readings(rule, text)
                 if shown is not None:
-                    self.decided_by_reading.add(index)
+                    self.decided_by[index] = "reading"
                     return shown
                 if rule.check in self.compiled.device_functions:
                     return self._ask_device(rule.check, f"Read the current state for the rule {text!r}.", index)
                 return self._agent_call(
                     rule.check, f"Read {rule.check} for the user's line.", f"Read the current state for the rule {text!r}.", index
                 )
-            answer = self._call(
-                P.DOES_CONDITION_HOLD, rule=text, rule_text=rule.policy, reading=f"{rule.check}: {reading.text}"
-            ).answer
+            compared = self._call(
+                P.DOES_CONDITION_HOLD, rule=rule.condition, rule_text=rule.policy, reading=f"{rule.check}: {reading.text}"
+            )
+            answer = compared.answer if _about(rule, compared.state_in_reading) else "cannot tell"
+            if rule.escalate and answer == "yes" and not verbatim(compared.state_rule_names, reading.text):
+                answer = "no"  # a transfer ends the conversation, so the state it rests on must be written in the reading
             if answer != "cannot tell":
-                self.decided_by_reading.add(index)
+                self.decided_by[index] = "reading"
         else:
             met = self._call(P.IS_CONDITION_MET, condition=text, record=self._record_text(rule, with_user_words=False))
             answer = met.answer
@@ -311,7 +328,28 @@ class TelecomProgram:
                 answer = "yes" if P.evaluate(met.expression) else "no"
         if answer == "cannot tell" and not rule.escalate:
             answer = self._call(P.USER_PREMISE, condition=text, user_messages="\n".join(self.user_words)).answer
+            self.decided_by[index] = "premise"
         return answer == "yes"
+
+    def _repeatable_fix(self, rule: Rule) -> bool:
+        """A phone-side fix the policy does not describe as setting a state, so running it twice changes nothing."""
+        return rule.fix in self.compiled.device_functions and not rule.fixed_state and not rule.escalate and not rule.procedures
+
+    def _already_in_place(self, rule: Rule) -> bool | None:
+        """skip a fix whose effect is already in place: compare the reading with the state the fix leaves the setting in"""
+        reader = rule.reader or rule.check
+        current = self._fresh(reader) if reader else None
+        if current is None:
+            return None
+        compared = self._call(
+            P.ALREADY_AS_WANTED,
+            rule=f"{rule.fix}: {rule.fixed_state or rule.condition}",
+            rule_text=rule.policy,
+            reading=f"{reader}: {current.text}",
+        )
+        if compared.answer == "cannot tell" or not _about(rule, compared.state_in_reading):
+            return None
+        return compared.answer == "yes"
 
     def _shown_by_other_readings(self, rule: Rule, condition: str) -> bool | None:
         """A fresh reading of another function counts only when the rule's own policy section names that function."""
@@ -321,7 +359,7 @@ class TelecomProgram:
         ]
         for reading in sorted(fresh, key=lambda r: -r.turn)[:2]:
             answer = self._call(
-                P.DOES_READING_SHOW, rule=condition, rule_text=rule.policy, reading=f"{reading.function}: {reading.text}"
+                P.DOES_READING_SHOW, rule=rule.condition, rule_text=rule.policy, reading=f"{reading.function}: {reading.text}"
             ).answer
             if answer != "cannot tell":
                 return answer == "yes"
@@ -332,22 +370,14 @@ class TelecomProgram:
         if self.attempts[index] >= MAX_FIX_ATTEMPTS:
             self.status[index] = "failed"
             return None
-        reader = rule.reader or rule.check
-        current = self._fresh(reader) if reader else None
-        if index in self.decided_by_reading:
-            current = None
-        elif current is not None:
-            already = self._call(
-                P.ALREADY_AS_WANTED,
-                rule=f"{rule.fix}: [{rule.section}] {rule.condition}",
-                rule_text=rule.policy,
-                reading=f"{reader}: {current.text}",
-            ).answer
-            if already == "yes":
+        if self.decided_by.get(index) == "premise":
+            in_place = self._already_in_place(rule)
+            if in_place:
                 self.status[index] = "already in place"
                 return None
-        elif reader and reader != rule.check:
-            return self._ask_device(reader, f"Read the current state before {rule.fix} so a fix already in place is not undone.", index)
+            reader = rule.reader or rule.check
+            if in_place is None and reader and self._fresh(reader) is None:
+                return self._ask_device(reader, f"Read the current state before {rule.fix} so a fix already in place is not undone.", index)
         self.attempts[index] += 1
         diagnostic = self.compiled.areas[self.area].diagnostic
         then = "".join(f", then {f}()" for f in rule.then)
@@ -517,6 +547,15 @@ class TelecomProgram:
             "Every other function runs on the user's phone, so I must ask the user to run it and never call it myself."
         )
         return "\n\n".join(parts)
+
+
+_NOT_A_SUBJECT = {"is", "are", "the", "a", "an", "it", "on", "off", "yes", "no", "not", "to", "of", "and", "or", "if", "shows", "turn", "use", "user", "guide"}
+
+
+def _about(rule: Rule, copied: str | None) -> bool:
+    """A copied reading counts for a rule only if it names something the rule is about, not just a state word like "on"."""
+    words = lambda text: {w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 1} - _NOT_A_SUBJECT
+    return bool(words(copied) & words(f"{rule.section} {rule.condition} {rule.fixed_state or ''}"))
 
 
 def _digits(text: str) -> str:

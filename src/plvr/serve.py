@@ -33,9 +33,13 @@ def main(argv: list[str]) -> None:
     budget = argparse.ArgumentParser()
     budget.add_argument("--wired-gb", type=float, required=True)
     budget.add_argument("--buffer-cache-gb", type=float, default=1.0)
+    budget.add_argument("--memory-gb", type=float, required=True)
     limits, rest = budget.parse_known_args(argv)
 
     def set_budget() -> int:
+        # MLX's default memory limit is 1.5x the whole recommended working set (about 56 GB here), so a server grows until
+        # another one runs out. Under this limit MLX frees its caches before allocating more.
+        mx.set_memory_limit(int(limits.memory_gb * 2**30))
         mx.set_cache_limit(int(limits.buffer_cache_gb * 2**30))
         return mx.set_wired_limit(int(limits.wired_gb * 2**30))
 

@@ -1,0 +1,16 @@
+Student qwen3-8b, 40 test tasks run by both arms
+  vanilla pass@1   17.5%
+  program pass@1   50.0%
+  gain            +32.5 points, 95% bootstrap CI [+17.5, +50.0]
+  discordant      program only 14, vanilla only 1; exact McNemar p = 0.0010
+  C1 (gain >= 20 and p < 0.01): VERIFIED
+Usage
+  vanilla: median 3.7 min/task, student output 8,785 tokens/task
+  program: median 8.6 min/task, student output 1,584 tokens/task, runner 61 primitive calls and 66,475 tokens/task
+Audit
+  vanilla: 40 records, 1 retried, 0 retried after a GPU memory error, 0 scored 0 as infrastructure errors
+  program: 40 records, 0 retried, 0 retried after a GPU memory error, 0 scored 0 as infrastructure errors
+By issue
+  [mms_issue]            n=16  vanilla 0/16  program 5/16
+  [mobile_data_issue]    n= 9  vanilla 1/9  program 4/9
+  [service_issue]        n=15  vanilla 6/15  program 11/15
