@@ -17,6 +17,7 @@ from plvr import tasks
 from plvr.agent import StudentAgent
 from plvr.llm import Server
 from plvr.models import MODELS, PRIMITIVE_RUNNER, STUDENTS, USER_SIMULATOR
+from plvr.telecom.guards import build_guard
 
 MAX_STEPS = 200
 MAX_ERRORS = 10
@@ -40,10 +41,10 @@ def check_servers(*servers: Server) -> None:
             raise ServerDown(f"{server.model.key} at {server.model.api_base} is not answering: {error}") from error
 
 
-def run_task(task: Task, arm: str, student: Server, runner: Server, user_key: str, out_dir: Path) -> float:
+def run_task(task: Task, arm: str, student: Server, runner: Server, user_key: str, out_dir: Path, guard: str = "off") -> float:
     errors: list[str] = []
     for _ in range(MAX_ATTEMPTS):
-        record = _attempt(task, arm, student, runner, user_key)
+        record = _attempt(task, arm, student, runner, user_key, guard)
         if "error" not in record:
             break
         errors.append(record.pop("error"))
@@ -55,14 +56,15 @@ def run_task(task: Task, arm: str, student: Server, runner: Server, user_key: st
     return record["reward"]
 
 
-def _attempt(task: Task, arm: str, student: Server, runner: Server, user_key: str) -> dict:
+def _attempt(task: Task, arm: str, student: Server, runner: Server, user_key: str, guard: str = "off") -> dict:
     env = build_environment(tasks.DOMAIN)
     thinker = None
     if arm == "program":
         from plvr.telecom.program import TelecomProgram
 
         thinker = TelecomProgram(policy=env.get_policy(), tools=env.get_tools(), runner=runner)
-    agent = StudentAgent(tools=env.get_tools(), domain_policy=env.get_policy(), student=student, thinker=thinker)
+    guards = build_guard(guard, env.get_policy(), env.get_tools(), runner)
+    agent = StudentAgent(tools=env.get_tools(), domain_policy=env.get_policy(), student=student, thinker=thinker, guard=guards)
     user_model = MODELS[user_key]
     user = build_user(
         "user_simulator",
@@ -82,6 +84,8 @@ def _attempt(task: Task, arm: str, student: Server, runner: Server, user_key: st
     )
     started = time.time()
     record = {"task_id": task.id, "arm": arm, "student": student.model.key, "user": user_key}
+    if guard != "off":
+        record["guard"] = guard
     try:
         result = run_simulation(orchestrator, evaluation_type=EvaluationType.ALL)
         record |= {
@@ -95,7 +99,7 @@ def _attempt(task: Task, arm: str, student: Server, runner: Server, user_key: st
         "seconds": time.time() - started,
         "agent_log": agent.log.as_dict(),
         "program_log": thinker.log_dict() if thinker else None,
-    }
+    } | ({"guard_primitive_calls": guards.run.log_dict()} if guards and guards.run else {})
 
 
 def main() -> None:
@@ -103,6 +107,12 @@ def main() -> None:
     parser.add_argument("--arm", choices=["vanilla", "program"], required=True)
     parser.add_argument("--student", choices=STUDENTS, required=True)
     parser.add_argument("--task-set", choices=tasks.TASK_SETS, required=True)
+    parser.add_argument(
+        "--guard",
+        choices=["off", "tools", "full"],
+        default="off",
+        help="check the student's actions before they go out: tools = tool-name guard, full = also the policy-precondition guard",
+    )
     parser.add_argument("--limit", type=int)
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--user", default=USER_SIMULATOR, choices=sorted(MODELS))
@@ -116,7 +126,7 @@ def main() -> None:
     check_servers(student, runner, Server(MODELS[args.user]))
     student.tokenizer, runner.tokenizer  # load once here: a lazy transformers import raced across worker threads
     with ThreadPoolExecutor(args.concurrency) as pool:
-        futures = {pool.submit(run_task, t, args.arm, student, runner, args.user, args.out): t for t in todo}
+        futures = {pool.submit(run_task, t, args.arm, student, runner, args.user, args.out, args.guard): t for t in todo}
         for done, future in enumerate(as_completed(futures), 1):
             try:
                 print(f"[{done}/{len(todo)}] reward={future.result()} {futures[future].id}", flush=True)

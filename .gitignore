@@ -8,3 +8,4 @@ logs/
 runs/
 .pytest_cache/
 .env
+.claude/
