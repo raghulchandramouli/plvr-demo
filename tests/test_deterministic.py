@@ -96,3 +96,12 @@ def test_expression_must_use_numbers_from_the_record():
 def test_verbatim_ignores_quote_marks_and_end_punctuation():
     assert verbatim('cellular connection shows no_service.', 'my cellular connection shows "no_service" and')
     assert verbatim("Data Saver mode is off", "Data Saver mode is OFF.")
+
+
+def test_one_word_state_matches_by_token_without_negation():
+    assert P.Compare(state_rule_names="2G", state_in_reading="2g_only", same=False).answer == "yes"
+    assert P.Compare(state_rule_names="ON", state_in_reading="Airplane Mode is on", same=False).answer == "yes"
+    assert P.Compare(state_rule_names="Locked", state_in_reading="not locked", same=False).answer == "no"
+    assert P.Compare(state_rule_names="Missing", state_in_reading="active", same=False).answer == "no"
+    assert P.Compare(state_rule_names="Data Saver mode is ON", state_in_reading="Data Saver mode is ON now", same=False).answer == "no"
+    assert P.Compare(state_rule_names="ON", state_in_reading=None, same=True).answer == "cannot tell"

@@ -25,6 +25,9 @@ cases = [
     (P.DOES_CONDITION_HOLD, by("VPN Connection Issues"), "check_vpn_status: VPN is ON and connected, performance level Poor", "yes"),
     (P.DOES_CONDITION_HOLD, by("Mobile Data Disabled"), "check_network_status: it says mobile data is not enabled", "yes"),
     (P.DOES_CONDITION_HOLD, by("Mobile Data Disabled"), "check_network_status: Mobile Data Enabled: Yes", "no"),
+    (P.DOES_CONDITION_HOLD, by("Mobile Data Disabled"), 'check_network_status: It says "Mobile Data Enabled: No."', "yes"),
+    (P.DOES_CONDITION_HOLD, by("Optimizing Network Mode Preferences"), "check_network_mode_preference: 2g_only", "yes"),
+    (P.DOES_CONDITION_HOLD, by("Optimizing Network Mode Preferences"), "check_network_mode_preference: 4g_5g_preferred", "no"),
     (P.ALREADY_AS_WANTED, by("Addressing Data Roaming Problems"), "check_network_status: Data Roaming Enabled: No", "no"),
     (P.ALREADY_AS_WANTED, by("Addressing Data Roaming Problems"), "check_network_status: Data Roaming Enabled: Yes", "yes"),
 ]

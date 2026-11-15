@@ -20,6 +20,7 @@ from plvr.telecom.policy import Rule, compile_policy
 MAX_FIX_ATTEMPTS = 2
 MAX_PROCEDURE_TURNS = 8
 MAX_REPEATS = 2
+MAX_PASSES = 2
 TRANSFER_MESSAGE = "YOU ARE BEING TRANSFERRED TO A HUMAN AGENT. PLEASE HOLD ON."
 
 Action = Literal["call", "ask", "procedure", "transfer", "tell", "close", "open"]
@@ -79,6 +80,8 @@ class TelecomProgram:
         self.status: dict[int, str] = {}
         self.attempts: Counter[int] = Counter()
         self.procedures_done: set[int] = set()
+        self.decided_by_reading: set[int] = set()
+        self.passes = 1
         self.last_fix_turn = 0
         self.proc: dict | None = None
         self.closed = False
@@ -224,7 +227,17 @@ class TelecomProgram:
                 step = self._rule_step(index, rule)
                 if step:
                     return step
+        if self.passes < MAX_PASSES:
+            return self._second_pass()
         return self._transfer("Escalate after a failed attempt: every rule in the policy was tried and the problem remains.")
+
+    def _second_pass(self) -> Step:
+        """re-run the rules' success check; stop when it passes: walk the rules again on fresh readings before escalating"""
+        self.passes += 1
+        self.status = {i: s for i, s in self.status.items() if s not in ("not needed", "already in place")}
+        self.decided_by_reading.clear()
+        self.last_fix_turn = self.turn + 1
+        return self._decide()
 
     def _identify(self) -> Step:
         """identify first: looks up the user before anything else"""
@@ -279,6 +292,7 @@ class TelecomProgram:
             if reading is None:
                 shown = self._shown_by_other_readings(rule, text)
                 if shown is not None:
+                    self.decided_by_reading.add(index)
                     return shown
                 if rule.check in self.compiled.device_functions:
                     return self._ask_device(rule.check, f"Read the current state for the rule {text!r}.", index)
@@ -288,6 +302,8 @@ class TelecomProgram:
             answer = self._call(
                 P.DOES_CONDITION_HOLD, rule=text, rule_text=rule.policy, reading=f"{rule.check}: {reading.text}"
             ).answer
+            if answer != "cannot tell":
+                self.decided_by_reading.add(index)
         else:
             met = self._call(P.IS_CONDITION_MET, condition=text, record=self._record_text(rule, with_user_words=False))
             answer = met.answer
@@ -318,7 +334,9 @@ class TelecomProgram:
             return None
         reader = rule.reader or rule.check
         current = self._fresh(reader) if reader else None
-        if current is not None:
+        if index in self.decided_by_reading:
+            current = None
+        elif current is not None:
             already = self._call(
                 P.ALREADY_AS_WANTED,
                 rule=f"{rule.fix}: [{rule.section}] {rule.condition}",

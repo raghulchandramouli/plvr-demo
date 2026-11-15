@@ -94,9 +94,22 @@ class Compare(BaseModel):
 
     @property
     def answer(self) -> Tri:
-        if not self.state_in_reading or self.same is None:
+        if not self.state_in_reading:
             return "cannot tell"
-        return "yes" if self.same else "no"
+        if self.same or _names_one_token_of(self.state_rule_names, self.state_in_reading):
+            return "yes"
+        return "cannot tell" if self.same is None else "no"
+
+
+_TOKEN = re.compile(r"[a-z0-9]+")
+_NEGATION = {"not", "no", "never", "nt", "off"}
+
+
+def _names_one_token_of(rule_state: str | None, reading_state: str) -> bool:
+    """A one-word state the rule names (\"2G\", \"Locked\") matches a reading that contains that word and no negation."""
+    rule_tokens = _TOKEN.findall((rule_state or "").lower())
+    reading_tokens = _TOKEN.findall(reading_state.lower().replace("n't", " nt"))
+    return len(rule_tokens) == 1 and rule_tokens[0] in reading_tokens and not _NEGATION & set(reading_tokens)
 
 
 class Met(BaseModel):
@@ -384,7 +397,8 @@ _COMPARE_STEPS = (
     "STATE_RULE_NAMES: copy from RULE the state it looks for (for example \"Missing\" or \"Airplane Mode is ON\"). "
     "STATE_IN_READING: copy from READING what it shows for that same setting, or null if READING does not mention it. "
     "SAME: true if the two name the same state, false if they name different states. Judge the meaning, not the wording: "
-    "\"not enabled\" and \"disabled\" are the same state. RULE_TEXT is the policy section, for context."
+    "\"not enabled\" and \"disabled\" are the same state, and a value that includes the named state counts as that state "
+    "(for example \"abc_only\" includes \"abc\"). RULE_TEXT is the policy section, for context."
 )
 _COMPARE_FORM = '{"state_rule_names": "<copied words>", "state_in_reading": "<copied words>" | null, "same": true | false | null}'
 
