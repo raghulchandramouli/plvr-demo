@@ -4,9 +4,10 @@ This repository reproduces the τ²-bench Telecom result of CoreThink's paper "C
 
 The paper reports that on τ² Telecom, an 8B model under its program goes from 43.0% to 91.2%. It also reports that the gap between student models shrinks from 15.0 points to 1.1. This repository tests that claim with Qwen3-4B, Qwen3-8B and Qwen3-14B as students. Qwen3-8B runs the primitives, and Qwen3-30B-A3B plays the τ² user.
 
-Status: in progress. No results yet.
+**Result.** On τ²'s 40-task Telecom test split, the paper's final telecom program raised Qwen3-8B from 17.5% to 50.0% pass@1, a gain of 32.5 points (exact McNemar p = 0.001). The pre-registered claim that the program adds at least 20 points is VERIFIED for this student. The paper reports 43.0% to 91.2% for Granite-4.2-8B with a stronger user simulator. See [the results](experiments/telecom-headline/results.md).
 
 - [Pre-registration](experiments/telecom-headline/preregistration.md) lists the claims, the verdict rules, and every deviation from the paper.
+- [Results](experiments/telecom-headline/results.md) give the scores, the verdicts, the failure analysis, and the threats to validity.
 - [Decision log](experiments/telecom-headline/decisions.md) records each decision as it was made.
 
 ## Setup

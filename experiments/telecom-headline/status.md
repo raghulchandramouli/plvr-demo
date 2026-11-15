@@ -20,12 +20,11 @@ All development used dev tasks (`full` minus `base`), never test tasks.
 The condition probe (`scripts/probe_conditions.py`) scores 16 of 19 at the freeze.
 Its three errors either cost extra turns or are caught by the second pass.
 
-## Test runs
+## Test runs: finished on 2026-11-15
 
-Run in this order, 2 conversations at a time:
-
-1. The program with Qwen3-8B as student, 40 test tasks: `runs/test/program-qwen3-8b/`.
-2. Plain Qwen3-8B, the 36 test tasks not yet done: `runs/test/vanilla-qwen3-8b/` (4 finished before the freeze).
+Both arms ran all 40 test tasks with Qwen3-8B as the student.
+Vanilla solved 7 (17.5%) and the program solved 20 (50.0%). See `results.md`.
+The audit found no task scored 0 for an infrastructure reason.
 
 ## How to resume after a stop
 
