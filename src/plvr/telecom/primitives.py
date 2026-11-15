@@ -27,8 +27,9 @@ class RuleParts(BaseModel):
     fix: str | None = None
     fix_arguments: dict[str, Any] = {}
     escalate: bool = False
+    fixed_state: str | None = None
 
-    @field_validator("check", "fix", mode="before")
+    @field_validator("check", "fix", "fixed_state", mode="before")
     @classmethod
     def _null_word(cls, value: Any) -> Any:
         return None if isinstance(value, str) and value.strip().lower() in ("", "null", "none") else value
@@ -255,9 +256,10 @@ COPY_RULE_CONDITION = Primitive(
         "FIX: the function from FUNCTIONS the rule says to use, or have the user use, when the condition holds, or null if it names none. "
         "FIX_ARGUMENTS: argument values the rule writes for the fix, copied exactly, or {}. "
         "ESCALATE: true only if the rule says to escalate or transfer the user. "
+        "FIXED_STATE: copy the words that say what state the fix leaves the setting in (for example \"to turn it OFF\"), or null. "
         "Return {\"rules\": []} if the section has no such rule."
     ),
-    form='{"rules": [{"condition": "<copied words>", "check": "<name>" | null, "fix": "<name>" | null, "fix_arguments": {}, "escalate": false}]}',
+    form='{"rules": [{"condition": "<copied words>", "check": "<name>" | null, "fix": "<name>" | null, "fix_arguments": {}, "escalate": false, "fixed_state": "<copied words>" | null}]}',
     output=SectionRules,
     verify=_verify_rules,
     fallback=lambda i: SectionRules(rules=[]),
@@ -352,7 +354,11 @@ DEVICE_REPLY = Primitive(
     form='{"reports": [{"function": "<name from ASKED>", "result": "<copied words>" | null}]}',
     output=DeviceReply,
     verify=lambda o, i: _all_in([r.function for r in o.reports], i["asked"])
-    or next((f"result for {r.function} not verbatim" for r in o.reports if r.result and not verbatim(r.result, i["user_message"])), None),
+    or (
+        "no result is verbatim"
+        if o.reports and all(r.result and not verbatim(r.result, i["user_message"]) for r in o.reports)
+        else None
+    ),
     fallback=lambda i: DeviceReply(reports=[]),
 )
 
@@ -453,10 +459,11 @@ ALREADY_AS_WANTED = Primitive(
     name="Is the setting already as wanted",
     group="troubleshooting conditions",
     instruction=(
-        "The RULE's fix changes a setting. STATE_RULE_NAMES: copy from RULE_TEXT the state the fix should leave the setting in "
-        "(for example \"OFF\" or \"Data Roaming is ON\"). STATE_IN_READING: copy from READING what it shows for that setting now, "
-        "or null if READING does not mention it. SAME: true if the setting is already in the state the fix wants. "
-        "Judge the meaning, not the wording."
+        "The fix in RULE changes a setting on the user's phone. "
+        "STATE_RULE_NAMES: copy from RULE the state the setting is in after the fix has run, the healthy state "
+        "(for example \"OFF\" after turning a feature off, or \"granted\" after granting a permission). "
+        "STATE_IN_READING: copy from READING what it shows for that setting now, or null if READING does not mention it. "
+        "SAME: true only if READING shows the setting already fully in that healthy state. Judge the meaning, not the wording."
     ),
     form=_COMPARE_FORM,
     output=Compare,

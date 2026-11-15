@@ -21,6 +21,8 @@ SYSTEM = (
     "When you quote, copy the text character for character from the input named."
 )
 MAX_INPUT_CHARS = 12000
+THINKING_TOKENS = 1500
+THINKING_SAMPLING = {"temperature": 0.6, "top_p": 0.95, "top_k": 20}  # Qwen3's thinking-mode settings; greedy decoding loops
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,7 @@ class Primitive(Generic[Out]):
     verify: Callable[[Out, dict[str, Any]], str | None]
     fallback: Callable[[dict[str, Any]], Out]
     max_tokens: int = 400
+    think: bool = False
 
 
 @dataclass
@@ -64,9 +67,13 @@ class Runner:
     def __call__(self, primitive: Primitive[Out], context: Context, **inputs: Any) -> Out:
         prompt = self.server.render(
             [{"role": "system", "content": SYSTEM}, {"role": "user", "content": _render(primitive, context, inputs)}],
-            thinking=False,
+            thinking=primitive.think,
         )
-        out = self.server.complete(prompt, max_tokens=primitive.max_tokens, temperature=0.0)
+        out = self.server.complete(
+            prompt,
+            max_tokens=primitive.max_tokens + (THINKING_TOKENS if primitive.think else 0),
+            **(THINKING_SAMPLING if primitive.think else {"temperature": 0.0}),
+        )
         rejection, value = None, None
         try:
             value = primitive.output.model_validate(_first_json_object(out.text))

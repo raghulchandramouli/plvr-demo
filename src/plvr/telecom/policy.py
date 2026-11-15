@@ -12,10 +12,10 @@ import threading
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from plvr.primitive import Context, Runner
+from plvr.primitive import Context, Runner, verbatim
 from plvr.telecom import primitives as P
 
-COMPILE_VERSION = 3
+COMPILE_VERSION = 4
 CACHE_DIR = Path("runs/cache")
 _lock = threading.Lock()
 
@@ -43,6 +43,7 @@ class Rule:
     then: list[str] = field(default_factory=list)
     reader: str | None = None
     policy: str = ""
+    fixed_state: str | None = None
 
 
 @dataclass
@@ -234,6 +235,8 @@ def _rules_of(run, ctx, top, s, governed, agent, procedures, rejected) -> list[R
         if part.check and (part.check == part.fix or part.check not in governed):
             part = part.model_copy(update={"check": None})
         part = part.model_copy(update={"fix_arguments": P.quoted_arguments(part.fix_arguments, text)})
+        if part.fixed_state and not verbatim(part.fixed_state, text):
+            part = part.model_copy(update={"fixed_state": None})
         if problem := P.rule_problem(part, text, governed):
             rejected.append(f"{s.title}: dropped rule ({problem})")
         else:
@@ -248,7 +251,10 @@ def _rules_of(run, ctx, top, s, governed, agent, procedures, rejected) -> list[R
         ).about_this_action:
             rules[-1].then.append(part.fix)
             continue
-        rule = Rule(top.title, s.title, part.condition, part.check, part.fix, part.fix_arguments, part.escalate, policy=text)
+        rule = Rule(
+            top.title, s.title, part.condition, part.check, part.fix, part.fix_arguments, part.escalate,
+            policy=text, fixed_state=part.fixed_state,
+        )
         if defers_to_policy and not rule.escalate:
             rule.procedures = run(P.PLAN_STEPS, ctx, rule=text, procedure_titles=list(procedures)).procedures
         if rule.fix is None and not rule.escalate:
@@ -274,7 +280,7 @@ def main() -> None:
         for i, r in enumerate(compiled.checklist(area.title)):
             print(
                 f"   {i:2} [{r.section}] if {r.condition!r}: check={r.check} fix={r.fix}{r.fix_arguments or ''}"
-                f" then={r.then} reader={r.reader} escalate={r.escalate} procedures={r.procedures}"
+                f" then={r.then} reader={r.reader} escalate={r.escalate} procedures={r.procedures} fixed_state={r.fixed_state!r}"
             )
     print("\nrejected:", *compiled.rejected, sep="\n  ")
     rejected_calls = [c for c in run.calls if not c.accepted]
