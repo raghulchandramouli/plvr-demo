@@ -135,13 +135,26 @@ class Price(BaseModel):
     unit_price_quote: str | None = None
 
 
-class Achieved(BaseModel):
-    evidence: str | None = None
-    achieved: Tri
-
-
 class Confirmation(BaseModel):
     answer: Literal["yes", "no", "unclear"]
+
+
+class Steps(BaseModel):
+    steps: list[str]
+
+
+class Changes(BaseModel):
+    evidence: str | None = None
+    changes: bool
+
+
+class Prerequisite(BaseModel):
+    title: str
+    quote: str | None = None
+
+
+class Prerequisites(BaseModel):
+    first: list[Prerequisite]
 
 
 # ---------------------------------------------------------------- verifier helpers
@@ -304,6 +317,56 @@ PLAN_STEPS = Primitive(
     output=Procedures,
     verify=lambda o, i: _all_in(o.procedures, i["procedure_titles"]),
     fallback=lambda i: Procedures(procedures=[]),
+)
+
+COPY_PROCEDURE_STEPS = Primitive(
+    name="Copy the procedure's steps",
+    group="checking the policy",
+    instruction=(
+        "This policy SECTION may tell the agent how to carry out a request. "
+        "List, in the order they must happen, each step the SECTION tells the agent or the user to take. "
+        "Copy each step's words from the SECTION, one action per step. "
+        "Skip sentences that only describe or explain, and skip lists of reasons or attributes. "
+        'Return {"steps": []} if the SECTION gives no steps.'
+    ),
+    form='{"steps": ["<copied words>", ...]}',
+    output=Steps,
+    verify=lambda o, i: "no step is verbatim in the section"
+    if o.steps and not any(verbatim(s, i["section"]) for s in o.steps)
+    else None,
+    fallback=lambda i: Steps(steps=[]),
+    max_tokens=600,
+)
+
+DOES_FUNCTION_CHANGE_RECORD = Primitive(
+    name="Does the function change a record",
+    group="finding the tools",
+    instruction=(
+        "Decide from its DESCRIPTION whether calling this FUNCTION changes a record, or only reads. "
+        "Copy the words of the DESCRIPTION that show it."
+    ),
+    form='{"evidence": "<copied words>", "changes": true | false}',
+    output=Changes,
+    verify=lambda o, i: None if verbatim(o.evidence, i["description"]) else "evidence not verbatim in description",
+    fallback=lambda i: Changes(changes=False),
+    max_tokens=80,
+)
+
+WHAT_COMES_FIRST = Primitive(
+    name="What must be done first",
+    group="checking the policy",
+    instruction=(
+        "This policy SECTION makes a change for the user. It may say that something else must have happened before "
+        "the agent may make that change. PROCEDURES lists other parts of the policy that make a change. "
+        "List the titles from PROCEDURES whose change the SECTION says must come first, and for each copy the words "
+        'of the SECTION that say so. Return {"first": []} if the SECTION names none.'
+    ),
+    form='{"first": [{"title": "<title from PROCEDURES>", "quote": "<copied words of SECTION>"}]}',
+    output=Prerequisites,
+    verify=lambda o, i: _all_in([f.title for f in o.first], i["procedures"])
+    or next((f"quote for {f.title!r} not verbatim in section" for f in o.first if not verbatim(f.quote, i["section"])), None),
+    fallback=lambda i: Prerequisites(first=[]),
+    max_tokens=200,
 )
 
 PICK_FUNCTION = Primitive(
@@ -536,19 +599,6 @@ PRICE_TERMS = Primitive(
     verify=_verify_price,
     fallback=lambda i: Price(quantity=None, unit_price=None),
     max_tokens=150,
-)
-
-REQUEST_ACHIEVED = Primitive(
-    name="Is the request achieved",
-    group="finishing",
-    instruction=(
-        "The POLICY_SECTION describes a change to make for the user. ACTIONS lists the calls the agent made since starting it, "
-        "with their results. Decide whether those actions have made the change the section is for. Copy the deciding words of ACTIONS."
-    ),
-    form='{"evidence": "<copied words>" | null, "achieved": "yes" | "no" | "cannot tell"}',
-    output=Achieved,
-    verify=lambda o, i: _evidence(o.achieved, o.evidence, i["actions"]),
-    fallback=lambda i: Achieved(achieved="cannot tell"),
 )
 
 REPLY_TO_CONFIRMATION = Primitive(

@@ -56,6 +56,22 @@ class Area:
 
 
 @dataclass
+class ProcedureStep:
+    text: str
+    function: str | None = None
+
+
+@dataclass
+class Procedure:
+    """A main-policy section as an ordered list of steps. `effects`, never empty, are the agent functions that make its change."""
+
+    title: str
+    steps: list[ProcedureStep]
+    effects: list[str]
+    requires: list[str] = field(default_factory=list)
+
+
+@dataclass
 class Compiled:
     areas: dict[str, Area]
     procedures: dict[str, str]
@@ -64,6 +80,8 @@ class Compiled:
     descriptions: dict[str, str]
     rejected: list[str]
     preamble: str
+    plans: dict[str, Procedure] = field(default_factory=dict)
+    state_changing: list[str] = field(default_factory=list)
 
     def checklist(self, area_title: str) -> list[Rule]:
         """Rules of the area's prerequisites first, then its own, in written order, without repeats."""
@@ -161,6 +179,9 @@ def _load(data: dict) -> Compiled:
     data["areas"] = {
         t: Area(**{**a, "rules": [Rule(**r) for r in a["rules"]]}) for t, a in data["areas"].items()
     }
+    data["plans"] = {
+        t: Procedure(**{**p, "steps": [ProcedureStep(**s) for s in p["steps"]]}) for t, p in data.get("plans", {}).items()
+    }
     return Compiled(**data)
 
 
@@ -218,7 +239,66 @@ def _compile(policy: str, tools: list, run: Runner) -> Compiled:
                 rule.reader = rule.check or _pick(
                     run, ctx, f"Read the current state of the setting that {rule.fix} changes.", reads, rule.fix
                 )
-    return Compiled(areas, procedures, sorted(device), sorted(agent), descriptions, rejected, preamble)
+    compiled = Compiled(areas, procedures, sorted(device), sorted(agent), descriptions, rejected, preamble)
+    _add_procedure_plans(run, ctx, compiled)
+    return compiled
+
+
+def _add_procedure_plans(run: Runner, ctx: Context, compiled: Compiled) -> None:
+    """Runs after the checklist is compiled, so the functions it adds do not change what the checklist was read with."""
+    named = named_functions("\n".join(compiled.procedures.values()), compiled.descriptions)
+    compiled.device_functions = sorted({*compiled.device_functions, *named})
+    compiled.descriptions.update(dict.fromkeys(named, ""))
+    writes = changing_functions(run, ctx, {n: compiled.descriptions[n] for n in compiled.agent_functions})
+    compiled.state_changing = sorted(writes)
+    deferred_to = {t for area in compiled.areas.values() for rule in area.rules for t in rule.procedures}
+    compiled.plans = plan_procedures(run, ctx, compiled.procedures, writes, compiled.descriptions, deferred_to)
+
+
+def named_functions(text: str, known: dict[str, str]) -> list[str]:
+    """Names a procedure writes in snake_case that are not among the known functions: the agent has no such tool."""
+    return sorted(set(re.findall(r"\b[a-z]+(?:_[a-z]+)+\b", text)) - set(known))
+
+
+def changing_functions(run: Runner, ctx: Context, agent: dict[str, str]) -> dict[str, str]:
+    return {
+        name: description
+        for name, description in agent.items()
+        if run(P.DOES_FUNCTION_CHANGE_RECORD, ctx, function=name, description=description).changes
+    }
+
+
+def plan_procedures(
+    run: Runner, ctx: Context, sections: dict[str, str], writes: dict[str, str], functions: dict[str, str], deferred_to: set[str]
+) -> dict[str, Procedure]:
+    """A main-policy section becomes a step list when its steps use a changing function: those functions are its effects."""
+    plans: dict[str, Procedure] = {}
+    for title, body in sections.items():
+        text = f"## {title}\n{body}"
+        steps = [
+            ProcedureStep(step, _pick(run, ctx, f"Carry out this step of the policy section '{title}': {step}", functions, None))
+            for step in run(P.COPY_PROCEDURE_STEPS, ctx, section=text).steps
+            if verbatim(step, text)
+        ]
+        # A change is made once: when several steps pick the same changing function, the last one carries it.
+        carrier = {step.function: n for n, step in enumerate(steps) if step.function in writes}
+        for n, step in enumerate(steps):
+            if step.function in writes and carrier[step.function] != n:
+                step.function = None
+        if not carrier and title in deferred_to:
+            change = _pick(run, ctx, f"Make the change this policy section tells the agent to make.\n{text}", writes, None)
+            if change:
+                steps.append(ProcedureStep(writes[change].strip().splitlines()[0], change))
+        if effects := [step.function for step in steps if step.function in writes]:
+            plans[title] = Procedure(title, steps, effects)
+
+    summaries = {title: sections[title][:400] for title in plans}
+    for title in plans:
+        others = {t: body for t, body in summaries.items() if t != title}
+        if others:
+            first = run(P.WHAT_COMES_FIRST, ctx, section=f"## {title}\n{sections[title]}", procedures=others).first
+            plans[title].requires = [f.title for f in first]
+    return plans
 
 
 def _pick(run: Runner, ctx: Context, goal: str, functions: dict[str, str], exclude: str | None) -> str | None:
@@ -282,6 +362,11 @@ def main() -> None:
                 f"   {i:2} [{r.section}] if {r.condition!r}: check={r.check} fix={r.fix}{r.fix_arguments or ''}"
                 f" then={r.then} reader={r.reader} escalate={r.escalate} procedures={r.procedures} fixed_state={r.fixed_state!r}"
             )
+    print(f"\n== Procedures\n   state-changing functions: {compiled.state_changing}")
+    for plan in compiled.plans.values():
+        print(f"   [{plan.title}] effects={plan.effects} requires={plan.requires}")
+        for n, step in enumerate(plan.steps):
+            print(f"      {n} {step.function or 'message'}: {step.text!r}")
     print("\nrejected:", *compiled.rejected, sep="\n  ")
     rejected_calls = [c for c in run.calls if not c.accepted]
     print(f"\n{len(run.calls)} primitive calls, {len(rejected_calls)} rejected by verifiers")
