@@ -139,13 +139,17 @@ class Confirmation(BaseModel):
     answer: Literal["yes", "no", "unclear"]
 
 
-class Steps(BaseModel):
-    steps: list[str]
-
-
-class Changes(BaseModel):
+class StateChange(BaseModel):
+    changes_state: bool
     evidence: str | None = None
-    changes: bool
+
+
+class Numbered(BaseModel):
+    number: int | None = None
+
+
+class Quote(BaseModel):
+    quote: str | None = None
 
 
 class Prerequisite(BaseModel):
@@ -319,37 +323,51 @@ PLAN_STEPS = Primitive(
     fallback=lambda i: Procedures(procedures=[]),
 )
 
-COPY_PROCEDURE_STEPS = Primitive(
-    name="Copy the procedure's steps",
+CHANGES_STATE = Primitive(
+    name="Does the function change stored data",
     group="checking the policy",
     instruction=(
-        "This policy SECTION may tell the agent how to carry out a request. "
-        "List, in the order they must happen, each step the SECTION tells the agent or the user to take. "
-        "Copy each step's words from the SECTION, one action per step. "
-        "Skip sentences that only describe or explain, and skip lists of reasons or attributes. "
-        'Return {"steps": []} if the SECTION gives no steps.'
+        "Decide whether calling the FUNCTION changes stored data (it creates, updates, sends, applies or removes something) "
+        "or only reads or looks something up. Judge from the DESCRIPTION, and from the POLICY where it says what the function is for. "
+        "When it changes data, copy the words of the DESCRIPTION or POLICY that show it as evidence."
     ),
-    form='{"steps": ["<copied words>", ...]}',
-    output=Steps,
-    verify=lambda o, i: "no step is verbatim in the section"
-    if o.steps and not any(verbatim(s, i["section"]) for s in o.steps)
-    else None,
-    fallback=lambda i: Steps(steps=[]),
-    max_tokens=600,
+    form='{"changes_state": true | false, "evidence": "<copied words>" | null}',
+    output=StateChange,
+    verify=lambda o, i: (
+        "evidence not verbatim" if o.changes_state and not verbatim(o.evidence, f"{i['description']}\n{i['policy']}") else None
+    ),
+    fallback=lambda i: StateChange(changes_state=False),
+    max_tokens=150,
 )
 
-DOES_FUNCTION_CHANGE_RECORD = Primitive(
-    name="Does the function change a record",
-    group="finding the tools",
+WHICH_LINE_INSTRUCTS = Primitive(
+    name="Which line tells the agent to make the change",
+    group="checking the policy",
     instruction=(
-        "Decide from its DESCRIPTION whether calling this FUNCTION changes a record, or only reads. "
-        "Copy the words of the DESCRIPTION that show it."
+        "The FUNCTION does what its DESCRIPTION says. LINES are numbered lines of the policy, each with the title of its section. "
+        "Pick the one line that instructs the agent to do what the FUNCTION does. The line may describe the action in its own "
+        "words without naming the FUNCTION. Use null if no line instructs the agent to do what the FUNCTION does: "
+        "a line about the opposite action, or about a different action, does not count."
     ),
-    form='{"evidence": "<copied words>", "changes": true | false}',
-    output=Changes,
-    verify=lambda o, i: None if verbatim(o.evidence, i["description"]) else "evidence not verbatim in description",
-    fallback=lambda i: Changes(changes=False),
-    max_tokens=80,
+    form='{"number": <number of the line> | null}',
+    output=Numbered,
+    verify=lambda o, i: None if o.number is None or 1 <= o.number <= len(i["lines"]) else "no line has that number",
+    fallback=lambda i: Numbered(),
+    max_tokens=40,
+)
+
+COPY_SENTENCE = Primitive(
+    name="Copy the sentence that answers",
+    group="checking the policy",
+    instruction=(
+        "Copy the one sentence or list item of the SECTION that answers the QUESTION, exactly as written. "
+        "Use null if no sentence of the SECTION answers it."
+    ),
+    form='{"quote": "<copied sentence>" | null}',
+    output=Quote,
+    verify=lambda o, i: None if o.quote is None or verbatim(o.quote, i["section"]) else "quote not verbatim in section",
+    fallback=lambda i: Quote(),
+    max_tokens=150,
 )
 
 WHAT_COMES_FIRST = Primitive(

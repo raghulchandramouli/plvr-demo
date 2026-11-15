@@ -15,7 +15,7 @@ from tau2.data_model.message import AssistantMessage, ToolMessage, UserMessage
 from plvr.llm import Server
 from plvr.primitive import MAX_INPUT_CHARS, Context, Primitive, Runner, verbatim
 from plvr.telecom import primitives as P
-from plvr.telecom.policy import Procedure, ProcedureStep, Rule, compile_policy
+from plvr.telecom.policy import Procedure, Rule, compile_policy
 
 MAX_FIX_ATTEMPTS = 2
 MAX_PROCEDURE_TURNS = 16
@@ -56,17 +56,20 @@ class Step:
 
 @dataclass
 class Frame:
-    """One procedure being carried out, and where its current step began."""
+    """One procedure being carried out. Turns are user turns; counts index `executed` and `records`."""
 
     title: str
     start: int  # len(executed) when the procedure began
     waiting: list[str]  # procedures the policy puts before this one, not yet begun
-    cursor: int = 0
-    since: int = 0  # len(executed) when the current step began
-    records: int = 0  # len(records) when the current step began
-    turn: int = 0  # user turn when the current step began
-    said: int | None = None  # user turn at which the current step last went to the user
-    asks: int = 0
+    said: int | None = None  # turn at which the student was last told to put something to the user
+    asks: int = 0  # times the user was asked for a value the change still needs
+    read: bool = False  # the read the section asks for before the change has been ordered
+    priced: int | None = None  # turn at which the price went to the user
+    changed: int | None = None  # len(records) when the change was first seen made
+    judged: int = 0  # len(records) at the last judgement of the completion check
+    reread: int = 0  # turn at which the completion check's read was last ordered
+    confirmed: bool = False
+    told: bool = False  # the user has been told what the policy says follows the change
 
 
 @dataclass
@@ -473,7 +476,6 @@ class TelecomProgram:
             if result != "made" or len(p.frames) == 1:
                 return self._end_procedure(result)
             p.frames.pop()
-            self._begin_step(p.frames[-1], p.frames[-1].cursor)
 
     def _end_procedure(self, outcome: Outcome) -> None:
         p, self.proc = self.proc, None
@@ -487,110 +489,109 @@ class TelecomProgram:
             self.status[p.rule] = "declined by the user" if outcome == "declined" else "procedure not completed"
 
     def _frame(self, title: str) -> Frame:
-        frame = Frame(title, len(self.executed), list(self.compiled.plans[title].requires))
-        self._begin_step(frame, 0)
-        return frame
-
-    def _begin_step(self, frame: Frame, cursor: int) -> None:
-        frame.cursor, frame.since, frame.records, frame.turn = cursor, len(self.executed), len(self.records), self.turn
-        frame.said, frame.asks = None, 0
+        return Frame(title, len(self.executed), list(self.compiled.plans[title].requires))
 
     def _made(self, frame: Frame) -> bool:
-        """A procedure's change is made when every function that carries it out has returned without error since it began."""
+        """A change is made when each function that carries it out has returned without error since the procedure began,
+        and the check the policy puts after it, if any, has been read from a record."""
+        plan = self.compiled.plans[frame.title]
+        return not self._pending(frame, plan) and (plan.check is None or frame.confirmed)
+
+    def _pending(self, frame: Frame, plan: Procedure) -> list[str]:
         succeeded = {name for name, _, error in self.executed[frame.start :] if not error}
-        return succeeded.issuperset(self.compiled.plans[frame.title].effects)
+        return [function for function in plan.effects if function not in succeeded]
 
     def _next_step(self, frame: Frame) -> Step | Outcome:
         plan = self.compiled.plans[frame.title]
-        condition = self.checklist[self.proc.rule].condition
-        if self._made(frame):
-            # The steps before the change exist to lead to it, so once it is made only the steps after it remain.
-            after = max(n for n, step in enumerate(plan.steps) if step.function in plan.effects) + 1
-            if frame.cursor < after:
-                self._begin_step(frame, after)
-        while frame.cursor < len(plan.steps):
-            step = plan.steps[frame.cursor]
-            why = (
-                f"The rule {condition!r} applies and the policy defers to {plan.title!r}. "
-                f"This is step {frame.cursor + 1} of {len(plan.steps)}."
-            )
-            if step.function in self.agent_functions:
-                result = self._call_step(frame, plan, step, why)
-            elif step.function:
-                result = self._device_step(frame, step, why)
-            else:
-                result = self._message_step(frame, step, why)
-            if isinstance(result, Step):
-                result.policy = f"## {plan.title}\n{step.text}{result.policy}"
-            if result is not None:
-                return result
-            self._begin_step(frame, frame.cursor + 1)
-        return "made" if self._made(frame) else "failed"
+        section = f"## {plan.title}\n{self.compiled.procedures[plan.title]}"
+        why = f"The rule {self.checklist[self.proc.rule].condition!r} applies and the policy defers to {plan.title!r}."
+        if pending := self._pending(frame, plan):
+            return self._toward_change(frame, plan, pending[0], section, why)
+        return self._after_change(frame, plan, section, why)
 
-    def _call_step(self, frame: Frame, plan: Procedure, step: ProcedureStep, why: str) -> Step | Outcome | None:
-        """verify payment before proceeding; escalate only after a failed attempt"""
-        function = step.function
-        is_change = function in plan.effects
-        # The change counts from the procedure's start, so a change the student made early is not made twice.
-        results = self.executed[frame.start if is_change else frame.since :]
-        if any(name == function and not error for name, _, error in results):
-            if not is_change and self._made(frame) and self._refuted(step, frame):
-                return "failed"
-            return None
-        errors = sum(name == function and error for name, _, error in self.executed[frame.since :])
-        if errors >= MAX_FIX_ATTEMPTS or frame.asks >= MAX_FIX_ATTEMPTS:
-            return "failed" if is_change else None
+    def _toward_change(self, frame: Frame, plan: Procedure, function: str, section: str, why: str) -> Step | Outcome:
+        """quantities from records; escalate only after a failed attempt"""
+        rule = self.proc.rule
+        if sum(name == function and error for name, _, error in self.executed[frame.start :]) >= MAX_FIX_ATTEMPTS:
+            return "failed"
         if self._said_no(frame):
             return "declined"
-        call = self._agent_call(function, step.text, why, self.proc.rule)
+        if plan.reads and not frame.read:
+            frame.read = True
+            read = self._agent_call(plan.reads, f"Read the records the policy section {plan.title!r} says to check.", why, rule)
+            repeated = any((name, arguments, error) == (read.function, read.arguments, False) for name, arguments, error in self.executed)
+            if read.action == "call" and not repeated:
+                return read
+        call = self._agent_call(function, plan.effects[function], why, rule)
         if call.action == "ask":
             frame.asks += 1
-            frame.said = self.turn
-        return call
-
-    def _refuted(self, step: ProcedureStep, frame: Frame) -> bool:
-        """A read the policy puts after the change checks it: the change stands unless the reading says otherwise."""
-        met = self._call(P.IS_CONDITION_MET, condition=step.text, record="\n".join(self.records[frame.records :]))
-        if met.expression:
-            return not P.evaluate(met.expression)
-        return met.answer == "no"
-
-    def _device_step(self, frame: Frame, step: ProcedureStep, why: str) -> Step | Outcome | None:
-        """customer acts on their device; restart after resuming"""
-        function = step.function
-        reading = self.readings.get(function)
-        if (reading and reading.turn > frame.turn) or function in self.unreadable:
-            return None
-        if self._said_no(frame):
-            return "declined"
-        frame.said = self.turn
-        return Step(
-            "ask",
-            f"Ask the user to use {function}() on their phone, as the policy step below says, and to tell you exactly what "
-            f"it shows. Do not call {function} yourself: only the user can run it.",
-            why,
-            function=function,
-            rule=self.proc.rule,
-        )
-
-    def _message_step(self, frame: Frame, step: ProcedureStep, why: str) -> Step | Outcome | None:
-        """quantities from records: every quantity is user-stated or computed from records"""
-        if frame.said is not None and self.turn > frame.said:
-            return "declined" if self._said_no(frame) else None
-        instruction = f"Do this step of the policy with one message to the user: {step.text}"
-        price = ""
-        if "price" in step.text.lower():
-            section = f"## {frame.title}\n{self.compiled.procedures[frame.title]}"
+            if frame.asks > MAX_FIX_ATTEMPTS:
+                return "failed"
+            frame.said, call.policy = self.turn, section
+            return call
+        if "price" in section.lower() and (frame.priced is None or frame.priced == self.turn):
             price = self._price_fact(section)
             if not price and (lookup := self._price_record(section, why)):
                 return lookup
-            instruction += (
-                " State the total computed below and ask the user to confirm it."
+            frame.priced = frame.said = self.turn
+            instruction = (
+                "Tell the user the total computed below and ask them to confirm it."
                 if price
-                else " State only a price that is written in the records."
+                else "Ask the user to confirm the price. State only a price that is written in the records."
             )
-        frame.said = self.turn
-        return Step("ask", instruction, why, rule=self.proc.rule, policy=price)
+            return Step("ask", instruction, why, rule=rule, policy=plan.effects[function] + price)
+        call.policy = plan.effects[function]
+        return call
+
+    def _after_change(self, frame: Frame, plan: Procedure, section: str, why: str) -> Step | Outcome:
+        """verify payment before proceeding; restart after resuming"""
+        rule = self.proc.rule
+        if frame.changed is None:
+            frame.changed = frame.judged = len(self.records)
+            frame.reread = self.turn
+        if plan.check and not frame.confirmed:
+            if len(self.records) > frame.judged:
+                frame.judged = len(self.records)
+                frame.confirmed = self._check_holds(frame, plan)
+            if not frame.confirmed:
+                if self._said_no(frame):
+                    return "declined"
+                if plan.check_reads and self.turn > frame.reread:
+                    frame.reread = self.turn
+                    read = self._agent_call(plan.check_reads, plan.check, why, rule)
+                    if read.action == "call":
+                        return read
+                frame.said = self.turn
+                return Step(
+                    "ask",
+                    "The change is requested, but the policy does not count it as complete yet. "
+                    "Do only the next step the section below gives after it, with one message to the user.",
+                    f"{why} It is complete only when a record shows this: {plan.check!r}",
+                    rule=rule,
+                    policy=section,
+                )
+        if plan.after and not frame.told:
+            frame.told = True
+            diagnostic = self.compiled.areas[self.area].diagnostic
+            return Step(
+                "ask",
+                "The change is made. Tell the user what the policy sentence below says they have to do now, "
+                f"and ask them to run {diagnostic}() afterwards and tell you exactly what it shows.",
+                why,
+                function=diagnostic,
+                rule=rule,
+                policy=plan.after,
+            )
+        return "made"
+
+    def _check_holds(self, frame: Frame, plan: Procedure) -> bool:
+        """Judge the policy's check on what was read after the change, narrowed to the records the change was made on."""
+        targets = [value for name, arguments, error in self.executed[frame.start :] if name in plan.effects and not error for value in arguments.values()]
+        record = "\n".join(_about_targets(read, targets) for read in self.records[frame.changed :])
+        met = self._call(P.IS_CONDITION_MET, condition=plan.check, record=record)
+        if met.expression:
+            return bool(P.evaluate(met.expression))
+        return met.answer == "yes"
 
     def _price_record(self, section: str, why: str) -> Step | None:
         """find the right record: read the record that states the price before quoting it"""
@@ -734,6 +735,19 @@ def _about(rule: Rule, copied: str | None) -> bool:
     """A copied reading counts for a rule only if it names something the rule is about, not just a state word like "on"."""
     words = lambda text: {w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 1} - _NOT_A_SUBJECT
     return bool(words(copied) & words(f"{rule.section} {rule.condition} {rule.fixed_state or ''}"))
+
+
+def _about_targets(read: str, targets: list) -> str:
+    """When a read returns a list of records, keep the ones that hold the most of the values the change was called with."""
+    call, _, result = read.partition(" -> ")
+    try:
+        items = json.loads(result)
+    except json.JSONDecodeError:
+        return read
+    if not (isinstance(items, list) and items and all(isinstance(item, dict) for item in items)):
+        return read
+    hits = [sum(target in item.values() for target in targets) for item in items]
+    return f"{call} -> {P.dumps([item for item, hit in zip(items, hits) if hit == max(hits)])}"
 
 
 def _digits(text: str) -> str:
