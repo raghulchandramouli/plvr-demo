@@ -61,7 +61,8 @@ def serve(key: str, concurrency: int, cache_gb: float) -> None:
         "--port", str(m.port),
         "--max-tokens", "8192",
         "--decode-concurrency", str(concurrency),
-        "--prompt-concurrency", str(concurrency),
+        "--prompt-concurrency", "1",
+        "--prefill-step-size", "1024",
         "--prompt-cache-bytes", str(int(cache_gb * 2**30)),
         "--log-level", "WARNING",
         "--wired-gb", str(m.wired_gb),
@@ -75,8 +76,8 @@ def main() -> None:
     sub.add_parser("download")
     s = sub.add_parser("serve")
     s.add_argument("key", choices=sorted(MODELS))
-    s.add_argument("--concurrency", type=int, default=4)
-    s.add_argument("--cache-gb", type=float, default=2.0)
+    s.add_argument("--concurrency", type=int, default=2)
+    s.add_argument("--cache-gb", type=float, default=1.0)
     args = parser.parse_args()
     if args.cmd == "download":
         download()
