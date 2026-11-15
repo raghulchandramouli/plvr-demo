@@ -1,0 +1,71 @@
+
+== Understanding and Troubleshooting Your Phone's Cellular Service
+   diagnostic=check_status_bar before=[]
+    0 [Airplane Mode] if 'If it is ON, guide the user to use `toggle_airplane_mode()` to turn it OFF.': check=check_network_status fix=toggle_airplane_mode then=[] reader=check_network_status escalate=False procedures=[] fixed_state='turn it OFF'
+    1 [SIM Card Issues] if 'it shows "Missing"': check=check_sim_status fix=reseat_sim_card then=[] reader=check_sim_status escalate=False procedures=[] fixed_state=None
+    2 [SIM Card Issues] if 'it shows "Locked"': check=check_sim_status fix=None then=[] reader=None escalate=True procedures=[] fixed_state=None
+    3 [Incorrect APN Settings] if 'If `check_apn_settings()` shows "Incorrect"': check=check_apn_settings fix=reset_apn_settings then=['reboot_device'] reader=check_apn_settings escalate=False procedures=[] fixed_state=None
+    4 [Line Suspension] if 'If the line is suspended and the agent can lift the suspension (per general policy), verify if service is restored.': check=None fix=None then=[] reader=None escalate=False procedures=['Line Suspension', 'Technical Support'] fixed_state=None
+    5 [Line Suspension] if 'If the suspension cannot be lifted by the agent (e.g., due to contract end date as mentioned in general policy, or other reasons not resolvable by the agent), escalate to technical support.': check=None fix=None then=[] reader=None escalate=True procedures=[] fixed_state=None
+
+== Understanding and Troubleshooting Your Phone's Mobile Data
+   diagnostic=run_speed_test before=["Understanding and Troubleshooting Your Phone's Cellular Service"]
+    0 [Airplane Mode] if 'If it is ON, guide the user to use `toggle_airplane_mode()` to turn it OFF.': check=check_network_status fix=toggle_airplane_mode then=[] reader=check_network_status escalate=False procedures=[] fixed_state='turn it OFF'
+    1 [SIM Card Issues] if 'it shows "Missing"': check=check_sim_status fix=reseat_sim_card then=[] reader=check_sim_status escalate=False procedures=[] fixed_state=None
+    2 [SIM Card Issues] if 'it shows "Locked"': check=check_sim_status fix=None then=[] reader=None escalate=True procedures=[] fixed_state=None
+    3 [Incorrect APN Settings] if 'If `check_apn_settings()` shows "Incorrect"': check=check_apn_settings fix=reset_apn_settings then=['reboot_device'] reader=check_apn_settings escalate=False procedures=[] fixed_state=None
+    4 [Line Suspension] if 'If the line is suspended and the agent can lift the suspension (per general policy), verify if service is restored.': check=None fix=None then=[] reader=None escalate=False procedures=['Line Suspension', 'Technical Support'] fixed_state=None
+    5 [Line Suspension] if 'If the suspension cannot be lifted by the agent (e.g., due to contract end date as mentioned in general policy, or other reasons not resolvable by the agent), escalate to technical support.': check=None fix=None then=[] reader=None escalate=True procedures=[] fixed_state=None
+    6 [Mobile Data Disabled] if 'If `check_network_status()` shows mobile data is disabled': check=check_network_status fix=toggle_data then=[] reader=check_network_status escalate=False procedures=[] fixed_state='to turn mobile data ON'
+    7 [Addressing Data Roaming Problems] if "If the user is outside their carrier's primary coverage area (roaming) and mobile data isn't working": check=check_network_status fix=toggle_roaming then=[] reader=check_network_status escalate=False procedures=['Data Roaming', 'Line'] fixed_state='ensure Data Roaming is ON'
+    8 [Data Saver Mode] if 'If `check_data_restriction_status()` shows "Data Saver mode is ON"': check=check_data_restriction_status fix=toggle_data_saver_mode then=[] reader=check_data_restriction_status escalate=False procedures=[] fixed_state='to turn it OFF'
+    9 [VPN Connection Issues] if 'If `check_vpn_status()` shows "VPN is ON and connected" and performance level is "Poor"': check=check_vpn_status fix=disconnect_vpn then=[] reader=check_vpn_status escalate=False procedures=[] fixed_state=None
+   10 [Data Plan Limits Reached] if "If the user's data usage for a line associated with the phone number the user provided exceeds the plan's data limit": check=get_data_usage fix=None then=[] reader=None escalate=False procedures=['Change Plan', 'Data Refueling'] fixed_state=None
+   11 [Optimizing Network Mode Preferences] if 'If check_network_mode_preference() shows "2G" or "3G"': check=check_network_mode_preference fix=set_network_mode_preference{'mode': '4g_5g_preferred'} then=[] reader=check_network_mode_preference escalate=False procedures=[] fixed_state='to allow the phone to connect to 5G'
+
+== Understanding and Troubleshooting MMS (Picture/Video Messaging)
+   diagnostic=can_send_mms before=["Understanding and Troubleshooting Your Phone's Cellular Service", "Understanding and Troubleshooting Your Phone's Mobile Data"]
+    0 [Airplane Mode] if 'If it is ON, guide the user to use `toggle_airplane_mode()` to turn it OFF.': check=check_network_status fix=toggle_airplane_mode then=[] reader=check_network_status escalate=False procedures=[] fixed_state='turn it OFF'
+    1 [SIM Card Issues] if 'it shows "Missing"': check=check_sim_status fix=reseat_sim_card then=[] reader=check_sim_status escalate=False procedures=[] fixed_state=None
+    2 [SIM Card Issues] if 'it shows "Locked"': check=check_sim_status fix=None then=[] reader=None escalate=True procedures=[] fixed_state=None
+    3 [Incorrect APN Settings] if 'If `check_apn_settings()` shows "Incorrect"': check=check_apn_settings fix=reset_apn_settings then=['reboot_device'] reader=check_apn_settings escalate=False procedures=[] fixed_state=None
+    4 [Line Suspension] if 'If the line is suspended and the agent can lift the suspension (per general policy), verify if service is restored.': check=None fix=None then=[] reader=None escalate=False procedures=['Line Suspension', 'Technical Support'] fixed_state=None
+    5 [Line Suspension] if 'If the suspension cannot be lifted by the agent (e.g., due to contract end date as mentioned in general policy, or other reasons not resolvable by the agent), escalate to technical support.': check=None fix=None then=[] reader=None escalate=True procedures=[] fixed_state=None
+    6 [Mobile Data Disabled] if 'If `check_network_status()` shows mobile data is disabled': check=check_network_status fix=toggle_data then=[] reader=check_network_status escalate=False procedures=[] fixed_state='to turn mobile data ON'
+    7 [Addressing Data Roaming Problems] if "If the user is outside their carrier's primary coverage area (roaming) and mobile data isn't working": check=check_network_status fix=toggle_roaming then=[] reader=check_network_status escalate=False procedures=['Data Roaming', 'Line'] fixed_state='ensure Data Roaming is ON'
+    8 [Data Saver Mode] if 'If `check_data_restriction_status()` shows "Data Saver mode is ON"': check=check_data_restriction_status fix=toggle_data_saver_mode then=[] reader=check_data_restriction_status escalate=False procedures=[] fixed_state='to turn it OFF'
+    9 [VPN Connection Issues] if 'If `check_vpn_status()` shows "VPN is ON and connected" and performance level is "Poor"': check=check_vpn_status fix=disconnect_vpn then=[] reader=check_vpn_status escalate=False procedures=[] fixed_state=None
+   10 [Data Plan Limits Reached] if "If the user's data usage for a line associated with the phone number the user provided exceeds the plan's data limit": check=get_data_usage fix=None then=[] reader=None escalate=False procedures=['Change Plan', 'Data Refueling'] fixed_state=None
+   11 [Optimizing Network Mode Preferences] if 'If check_network_mode_preference() shows "2G" or "3G"': check=check_network_mode_preference fix=set_network_mode_preference{'mode': '4g_5g_preferred'} then=[] reader=check_network_mode_preference escalate=False procedures=[] fixed_state='to allow the phone to connect to 5G'
+   12 [Unsuitable Network Technology for MMS] if 'If `check_network_status()` shows "2G"': check=check_network_status fix=set_network_mode_preference then=[] reader=check_network_status escalate=False procedures=[] fixed_state=None
+   13 [Verifying APN (MMSC URL) for MMS] if 'If check_apn_settings() shows MMSC URL is not set': check=check_apn_settings fix=reset_apn_settings then=['reboot_device'] reader=check_apn_settings escalate=False procedures=[] fixed_state=None
+   14 [Investigating Wi-Fi Calling Interference with MMS] if 'If `check_wifi_calling_status()` shows "Wi-Fi Calling is ON"': check=check_wifi_calling_status fix=toggle_wifi_calling then=[] reader=check_wifi_calling_status escalate=False procedures=[] fixed_state='to turn it OFF'
+   15 [Messaging App Lacks Necessary Permissions] if 'If check_app_permissions(app_name="messaging") shows "storage" and "sms" permissions are not listed as granted': check=check_app_permissions fix=grant_app_permission{'app_name': 'messaging', 'permission': 'storage'} then=['grant_app_permission'] reader=check_app_permissions escalate=False procedures=[] fixed_state=None
+
+rejected:
+  Diagnostic Actions (Read-only): no rules
+  Fix Actions (Write/Modify): no rules
+  Common Service Issues and Their Causes: 'If the user is experiencing service problems' names no fix and defers to no procedure
+  Diagnosing Service Issues: 'If there is cellular service, the status bar will return a signal strength indicator.' names no fix and defers to no procedure
+  What is Mobile Data?: no rules
+  Prerequisites for Mobile Data: 'For mobile data to work, the user must first have cellular service' names no fix and defers to no procedure
+  Common Mobile Data Issues and Causes: 'Airplane Mode is ON' names no fix and defers to no procedure
+  Common Mobile Data Issues and Causes: 'Mobile Data is Turned OFF' names no fix and defers to no procedure
+  Common Mobile Data Issues and Causes: 'Data Roaming is turned OFF on the phone' names no fix and defers to no procedure
+  Common Mobile Data Issues and Causes: 'The line is not roaming enabled' names no fix and defers to no procedure
+  Common Mobile Data Issues and Causes: 'Data Plan Limits Reached' names no fix and defers to no procedure
+  Common Mobile Data Issues and Causes: 'Data Saver Mode is ON' names no fix and defers to no procedure
+  Common Mobile Data Issues and Causes: 'VPN Issues' names no fix and defers to no procedure
+  Common Mobile Data Issues and Causes: 'Bad Network Preferences' names no fix and defers to no procedure
+  Diagnosing Mobile Data Issues: 'If data is available, a speed test will also return the data speed.' names no fix and defers to no procedure
+  Diagnosing Mobile Data Issues: 'Any speed below 'Excellent' is considered slow.' names no fix and defers to no procedure
+  What is MMS?: no rules
+  Common MMS Issues and Causes: 'No Cellular Service or Mobile Data Off/Not Working' names no fix and defers to no procedure
+  Common MMS Issues and Causes: 'Incorrect APN Settings' names no fix and defers to no procedure
+  Common MMS Issues and Causes: 'Connected to 2G Network' names no fix and defers to no procedure
+  Common MMS Issues and Causes: 'Wi-Fi Calling Configuration' names no fix and defers to no procedure
+  Common MMS Issues and Causes: 'App Permissions' names no fix and defers to no procedure
+  Diagnosing MMS Issues: no rules
+  Ensuring Basic Connectivity for MMS: no rules
+
+0 primitive calls, 0 rejected by verifiers
