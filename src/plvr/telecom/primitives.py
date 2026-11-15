@@ -135,13 +135,30 @@ class Price(BaseModel):
     unit_price_quote: str | None = None
 
 
-class Achieved(BaseModel):
-    evidence: str | None = None
-    achieved: Tri
-
-
 class Confirmation(BaseModel):
     answer: Literal["yes", "no", "unclear"]
+
+
+class StateChange(BaseModel):
+    changes_state: bool
+    evidence: str | None = None
+
+
+class Numbered(BaseModel):
+    number: int | None = None
+
+
+class Quote(BaseModel):
+    quote: str | None = None
+
+
+class Prerequisite(BaseModel):
+    title: str
+    quote: str | None = None
+
+
+class Prerequisites(BaseModel):
+    first: list[Prerequisite]
 
 
 # ---------------------------------------------------------------- verifier helpers
@@ -304,6 +321,70 @@ PLAN_STEPS = Primitive(
     output=Procedures,
     verify=lambda o, i: _all_in(o.procedures, i["procedure_titles"]),
     fallback=lambda i: Procedures(procedures=[]),
+)
+
+CHANGES_STATE = Primitive(
+    name="Does the function change stored data",
+    group="checking the policy",
+    instruction=(
+        "Decide whether calling the FUNCTION changes stored data (it creates, updates, sends, applies or removes something) "
+        "or only reads or looks something up. Judge from the DESCRIPTION, and from the POLICY where it says what the function is for. "
+        "When it changes data, copy the words of the DESCRIPTION or POLICY that show it as evidence."
+    ),
+    form='{"changes_state": true | false, "evidence": "<copied words>" | null}',
+    output=StateChange,
+    verify=lambda o, i: (
+        "evidence not verbatim" if o.changes_state and not verbatim(o.evidence, f"{i['description']}\n{i['policy']}") else None
+    ),
+    fallback=lambda i: StateChange(changes_state=False),
+    max_tokens=150,
+)
+
+WHICH_LINE_INSTRUCTS = Primitive(
+    name="Which line tells the agent to make the change",
+    group="checking the policy",
+    instruction=(
+        "The FUNCTION does what its DESCRIPTION says. LINES are numbered lines of the policy, each with the title of its section. "
+        "Pick the one line that instructs the agent to do what the FUNCTION does. The line may describe the action in its own "
+        "words without naming the FUNCTION. Use null if no line instructs the agent to do what the FUNCTION does: "
+        "a line about the opposite action, or about a different action, does not count."
+    ),
+    form='{"number": <number of the line> | null}',
+    output=Numbered,
+    verify=lambda o, i: None if o.number is None or 1 <= o.number <= len(i["lines"]) else "no line has that number",
+    fallback=lambda i: Numbered(),
+    max_tokens=40,
+)
+
+COPY_SENTENCE = Primitive(
+    name="Copy the sentence that answers",
+    group="checking the policy",
+    instruction=(
+        "Copy the one sentence or list item of the SECTION that answers the QUESTION, exactly as written. "
+        "Use null if no sentence of the SECTION answers it."
+    ),
+    form='{"quote": "<copied sentence>" | null}',
+    output=Quote,
+    verify=lambda o, i: None if o.quote is None or verbatim(o.quote, i["section"]) else "quote not verbatim in section",
+    fallback=lambda i: Quote(),
+    max_tokens=150,
+)
+
+WHAT_COMES_FIRST = Primitive(
+    name="What must be done first",
+    group="checking the policy",
+    instruction=(
+        "This policy SECTION makes a change for the user. It may say that something else must have happened before "
+        "the agent may make that change. PROCEDURES lists other parts of the policy that make a change. "
+        "List the titles from PROCEDURES whose change the SECTION says must come first, and for each copy the words "
+        'of the SECTION that say so. Return {"first": []} if the SECTION names none.'
+    ),
+    form='{"first": [{"title": "<title from PROCEDURES>", "quote": "<copied words of SECTION>"}]}',
+    output=Prerequisites,
+    verify=lambda o, i: _all_in([f.title for f in o.first], i["procedures"])
+    or next((f"quote for {f.title!r} not verbatim in section" for f in o.first if not verbatim(f.quote, i["section"])), None),
+    fallback=lambda i: Prerequisites(first=[]),
+    max_tokens=200,
 )
 
 PICK_FUNCTION = Primitive(
@@ -536,19 +617,6 @@ PRICE_TERMS = Primitive(
     verify=_verify_price,
     fallback=lambda i: Price(quantity=None, unit_price=None),
     max_tokens=150,
-)
-
-REQUEST_ACHIEVED = Primitive(
-    name="Is the request achieved",
-    group="finishing",
-    instruction=(
-        "The POLICY_SECTION describes a change to make for the user. ACTIONS lists the calls the agent made since starting it, "
-        "with their results. Decide whether those actions have made the change the section is for. Copy the deciding words of ACTIONS."
-    ),
-    form='{"evidence": "<copied words>" | null, "achieved": "yes" | "no" | "cannot tell"}',
-    output=Achieved,
-    verify=lambda o, i: _evidence(o.achieved, o.evidence, i["actions"]),
-    fallback=lambda i: Achieved(achieved="cannot tell"),
 )
 
 REPLY_TO_CONFIRMATION = Primitive(

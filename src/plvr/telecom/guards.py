@@ -23,7 +23,7 @@ from tau2.data_model.message import AssistantMessage, ToolMessage
 
 from plvr.primitive import Context, Primitive, Runner, verbatim
 from plvr.telecom import primitives as P
-from plvr.telecom.policy import device_functions, parse_sections
+from plvr.telecom.policy import device_functions, parse_sections, sentence_of
 
 GUARD_VERSION = 3
 CACHE_DIR = Path("runs/cache")
@@ -32,11 +32,6 @@ _lock = threading.Lock()
 
 
 # ---------------------------------------------------------------- primitives (compile time)
-
-
-class StateChange(BaseModel):
-    changes_state: bool
-    evidence: str | None = None
 
 
 class Titles(BaseModel):
@@ -52,25 +47,6 @@ class Requirement(BaseModel):
 class Requirements(BaseModel):
     requirements: list[Requirement]
 
-
-def _source(i: dict) -> str:
-    return f"{i['description']}\n{i['policy']}"
-
-
-CHANGES_STATE = Primitive(
-    name="Does the function change stored data",
-    group="checking the policy",
-    instruction=(
-        "Decide whether calling the FUNCTION changes stored data (it creates, updates, sends, applies or removes something) "
-        "or only reads or looks something up. Judge from the DESCRIPTION, and from the POLICY where it says what the function is for. "
-        "When it changes data, copy the words of the DESCRIPTION or POLICY that show it as evidence."
-    ),
-    form='{"changes_state": true | false, "evidence": "<copied words>" | null}',
-    output=StateChange,
-    verify=lambda o, i: "evidence not verbatim" if o.changes_state and not verbatim(o.evidence, _source(i)) else None,
-    fallback=lambda i: StateChange(changes_state=False),
-    max_tokens=150,
-)
 
 GOVERNING_SECTIONS = Primitive(
     name="Sections that govern a function",
@@ -128,13 +104,6 @@ class GuardPlan:
     rejected: list[str] = field(default_factory=list)
 
 
-def _sentence(source: str, condition: str) -> str:
-    for segment in re.split(r"(?<=[.!?])\s+|\n+", source):
-        if verbatim(condition, segment):
-            return segment.strip(" -*")
-    return condition
-
-
 NORMATIVE = re.compile(r"\b(allowed|only|must|cannot|can not|never|may not|should not|do not|not permitted|required)\b", re.I)
 
 
@@ -170,7 +139,7 @@ def _compile(policy: str, tools: list, run: Runner) -> GuardPlan:
     for tool in tools:
         name, description = tool.name, tool.openai_schema["function"]["description"]
         tech = "\n\n".join(f"## {s.title}\n{s.body}" for s in sections if s.part == "tech" and name in s.body)
-        change = run(CHANGES_STATE, ctx, function=name, description=description, policy=f"{main}\n\n{tech}".strip())
+        change = run(P.CHANGES_STATE, ctx, function=name, description=description, policy=f"{main}\n\n{tech}".strip())
         if not change.changes_state:
             continue
         plan.state_changing[name] = change.evidence or ""
@@ -188,7 +157,7 @@ def _compile(policy: str, tools: list, run: Runner) -> GuardPlan:
                 plan.rejected.append(f"{name}: '{r.condition}' depends on the conversation, not enforced")
             elif not verbatim(r.condition, text):
                 plan.rejected.append(f"{name}: '{r.condition}' not verbatim in the policy, dropped")
-            elif not _permits_or_forbids(sentence := _sentence(text, r.condition)):
+            elif not _permits_or_forbids(sentence := sentence_of(text, r.condition)):
                 plan.rejected.append(f"{name}: '{sentence}' describes, does not permit or forbid, dropped")
             else:
                 plan.preconditions[name].append(Precondition(name, r.condition, r.must_hold, sentence))
