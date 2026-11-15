@@ -29,3 +29,25 @@ The second compile keeps three preconditions and drops five, all correctly:
 
 The word list is a hand-written verifier, so it is part of the program, like the primitive verifiers.
 It was written after reading the telecom policy, so whether it transfers to another domain's policy is untested.
+
+## 2026-11-15: the precondition guard must not ask the model at run time
+
+Live dev check, program v1 with `--guard full`, task `[service_issue]overdue_bill_suspension[PERSONA:Easy]`.
+The student called `resume_line` while bill B1234321 was overdue, and the task failed on `assert_no_overdue_bill`.
+The guard asked Qwen3-8B "Is the condition met" for both `resume_line` preconditions:
+
+| Precondition | Raw reply | Verifier | Guard |
+| --- | --- | --- | --- |
+| Required: paid all overdue bills | answer "no", expression `'B1234321' < '2025-02-25'` | rejected: expression does not evaluate | "cannot tell", call sent |
+| Forbidden: contract end date in the past | answer "no", expression `'2026-12-31' >= '2025-02-25'` | rejected: answer disagrees with expression | "cannot tell", call sent |
+
+Both answers were right, and both were thrown away, because the expression the model attached was wrong.
+The evidence it copied was the policy sentence itself, which the record included, so evidence alone could not settle it either.
+
+Decision: the model maps each precondition to a record check once, at compile time.
+The check names a read function, a field, a test and a value.
+Code evaluates it at run time against the latest matching read.
+When no read is there yet, the guard blocks and tells the student which read to make.
+A separate agent builds this in guards.py, so it does not touch the files the procedure agent is changing.
+
+The tool-name guard on vanilla, 3 dev tasks: 7 phone-only calls blocked, all 7 recovered on the first resample, none reached the environment.
