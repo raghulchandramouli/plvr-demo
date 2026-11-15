@@ -25,7 +25,7 @@ from plvr.primitive import Context, Primitive, Runner, verbatim
 from plvr.telecom import primitives as P
 from plvr.telecom.policy import device_functions, parse_sections
 
-GUARD_VERSION = 1
+GUARD_VERSION = 3
 CACHE_DIR = Path("runs/cache")
 MAX_RESAMPLES = 2
 _lock = threading.Lock()
@@ -37,6 +37,10 @@ _lock = threading.Lock()
 class StateChange(BaseModel):
     changes_state: bool
     evidence: str | None = None
+
+
+class Titles(BaseModel):
+    titles: list[str]
 
 
 class Requirement(BaseModel):
@@ -68,21 +72,37 @@ CHANGES_STATE = Primitive(
     max_tokens=150,
 )
 
+GOVERNING_SECTIONS = Primitive(
+    name="Sections that govern a function",
+    group="checking the policy",
+    instruction=(
+        "The FUNCTION does what its DESCRIPTION says. List the titles from SECTION_TITLES of the policy sections whose rules say "
+        "when the agent may or may not do what this FUNCTION does. The section may describe the action in its own words without "
+        "naming the FUNCTION. Return [] if none does."
+    ),
+    form='{"titles": ["<title>", ...]}',
+    output=Titles,
+    verify=lambda o, i: next((f"unknown title {t!r}" for t in o.titles if t not in i["section_titles"]), None),
+    fallback=lambda i: Titles(titles=[]),
+    max_tokens=150,
+)
+
 PRECONDITIONS = Primitive(
     name="What must hold before the function is called",
     group="checking the policy",
     instruction=(
-        "List what the POLICY and the DESCRIPTION require to be true before the agent calls the FUNCTION, or forbid the call when true. "
+        "List what the POLICY requires to be true before the agent does what the FUNCTION does, or what makes the POLICY forbid it. "
         "CONDITION: copy the words that state it, as a statement that is true or false. "
         "MUST_HOLD: true if the call is allowed only when the condition holds; false if the call is forbidden when the condition holds. "
         'ABOUT: "records" if the condition can be decided from stored data (statuses, dates, amounts, quantities); '
         '"conversation" if it depends on what the user said, asked or agreed to. '
-        "Leave out steps the agent takes, and anything that does not concern this FUNCTION. Return an empty list if there is none."
+        "Leave out steps the agent takes, checks the DESCRIPTION says the function already makes, and anything that does not "
+        "concern this FUNCTION. Return an empty list if there is none."
     ),
     form='{"requirements": [{"condition": "<copied words>", "must_hold": true | false, "about": "records" | "conversation"}]}',
     output=Requirements,
     verify=lambda o, i: (
-        "no condition is verbatim" if o.requirements and not any(verbatim(r.condition, _source(i)) for r in o.requirements) else None
+        "no condition is verbatim" if o.requirements and not any(verbatim(r.condition, i["policy"]) for r in o.requirements) else None
     ),
     fallback=lambda i: Requirements(requirements=[]),
     max_tokens=500,
@@ -115,6 +135,14 @@ def _sentence(source: str, condition: str) -> str:
     return condition
 
 
+NORMATIVE = re.compile(r"\b(allowed|only|must|cannot|can not|never|may not|should not|do not|not permitted|required)\b", re.I)
+
+
+def _permits_or_forbids(sentence: str) -> bool:
+    """A precondition has to come from a sentence that grants or forbids something, not one that describes how things work."""
+    return NORMATIVE.search(sentence) is not None
+
+
 def compile_plan(policy: str, tools: list, runner: Runner) -> GuardPlan:
     """Which agent tools change state, and the record-checkable preconditions the policy gives each of them."""
     key = hashlib.sha256(
@@ -136,26 +164,34 @@ def _compile(policy: str, tools: list, run: Runner) -> GuardPlan:
     ctx = Context()
     sections = parse_sections(policy)
     main = "\n\n".join(f"{'#' * s.level} {s.title}\n{s.body}" for s in sections if s.part == "main")
+    rule_sections = {s.title: f"## {s.title}\n{s.body}" for s in sections if s.part == "main" and s.level >= 2 and s.body}
     preamble = next((s.body for s in sections if s.part == "main" and s.level == 1), "")
     plan = GuardPlan(preamble, {}, {})
     for tool in tools:
         name, description = tool.name, tool.openai_schema["function"]["description"]
         tech = "\n\n".join(f"## {s.title}\n{s.body}" for s in sections if s.part == "tech" and name in s.body)
-        text = f"{main}\n\n{tech}".strip()
-        change = run(CHANGES_STATE, ctx, function=name, description=description, policy=text)
+        change = run(CHANGES_STATE, ctx, function=name, description=description, policy=f"{main}\n\n{tech}".strip())
         if not change.changes_state:
             continue
         plan.state_changing[name] = change.evidence or ""
-        source = f"{description}\n{text}"
-        found = run(PRECONDITIONS, ctx, function=name, description=description, policy=text).requirements
+        governing = run(
+            GOVERNING_SECTIONS, ctx, function=name, description=description, section_titles=list(rule_sections)
+        ).titles
+        text = "\n\n".join([*(rule_sections[t] for t in governing), tech]).strip()
         plan.preconditions[name] = []
+        if not text:
+            plan.rejected.append(f"{name}: no policy section governs it")
+            continue
+        found = run(PRECONDITIONS, ctx, function=name, description=description, policy=text).requirements
         for r in found:
             if r.about != "records":
                 plan.rejected.append(f"{name}: '{r.condition}' depends on the conversation, not enforced")
-            elif not verbatim(r.condition, source):
-                plan.rejected.append(f"{name}: '{r.condition}' not verbatim, dropped")
+            elif not verbatim(r.condition, text):
+                plan.rejected.append(f"{name}: '{r.condition}' not verbatim in the policy, dropped")
+            elif not _permits_or_forbids(sentence := _sentence(text, r.condition)):
+                plan.rejected.append(f"{name}: '{sentence}' describes, does not permit or forbid, dropped")
             else:
-                plan.preconditions[name].append(Precondition(name, r.condition, r.must_hold, _sentence(source, r.condition)))
+                plan.preconditions[name].append(Precondition(name, r.condition, r.must_hold, sentence))
     return plan
 
 

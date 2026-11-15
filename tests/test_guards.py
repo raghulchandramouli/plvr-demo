@@ -63,6 +63,7 @@ def plan_with(tmp_path, monkeypatch, met):
     brain = Brain(
         {
             "Does the function change stored data": lambda p: CHANGES if "FUNCTION:\nresume_line" in p else READS,
+            "Sections that govern a function": '{"titles": ["Line Suspension"]}',
             "What must hold before the function is called": PRECONDITION,
             "Is the condition met": met,
         }
@@ -78,6 +79,20 @@ def test_plan_reads_write_tools_and_record_preconditions_from_the_policy(tmp_pat
     assert pre.sentence.startswith("You are allowed to lift the suspension after")
     assert any("conversation" in r for r in plan.rejected)
     assert list(tmp_path.glob("telecom-guards-*.json"))
+
+
+def test_a_sentence_that_only_describes_is_not_a_precondition():
+    assert G._permits_or_forbids("You are allowed to lift the suspension after the user has paid all their overdue bills.")
+    assert G._permits_or_forbids("A user can only have one bill in the AWAITING PAYMENT status at a time.")
+    assert not G._permits_or_forbids("If a line is roaming enabled, the user can use their phone's data connection abroad.")
+    assert not G._permits_or_forbids("The user has an overdue bill.")
+
+
+def test_preconditions_are_read_only_from_the_sections_that_govern_the_function(tmp_path, monkeypatch):
+    _, brain = plan_with(tmp_path, monkeypatch, '{"answer": "cannot tell"}')
+    [asked] = [p for p in brain.prompts if p.startswith("STEP: What must hold before the function is called")]
+    assert "lift the suspension" in asked
+    assert "send payment request tool" not in asked and "The current time is" not in asked
 
 
 def history(bill_status: str):
