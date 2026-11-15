@@ -383,7 +383,8 @@ def _verify_compare(o: Compare, i: dict) -> str | None:
 _COMPARE_STEPS = (
     "STATE_RULE_NAMES: copy from RULE the state it looks for (for example \"Missing\" or \"Airplane Mode is ON\"). "
     "STATE_IN_READING: copy from READING what it shows for that same setting, or null if READING does not mention it. "
-    "SAME: true if the two name the same state, false if they name different states. RULE_TEXT is the policy section, for context."
+    "SAME: true if the two name the same state, false if they name different states. Judge the meaning, not the wording: "
+    "\"not enabled\" and \"disabled\" are the same state. RULE_TEXT is the policy section, for context."
 )
 _COMPARE_FORM = '{"state_rule_names": "<copied words>", "state_in_reading": "<copied words>" | null, "same": true | false | null}'
 
@@ -440,7 +441,8 @@ ALREADY_AS_WANTED = Primitive(
     instruction=(
         "The RULE's fix changes a setting. STATE_RULE_NAMES: copy from RULE_TEXT the state the fix should leave the setting in "
         "(for example \"OFF\" or \"Data Roaming is ON\"). STATE_IN_READING: copy from READING what it shows for that setting now, "
-        "or null if READING does not mention it. SAME: true if the setting is already in the state the fix wants."
+        "or null if READING does not mention it. SAME: true if the setting is already in the state the fix wants. "
+        "Judge the meaning, not the wording."
     ),
     form=_COMPARE_FORM,
     output=Compare,
