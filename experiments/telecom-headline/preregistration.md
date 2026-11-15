@@ -44,9 +44,17 @@ The primitives are written by the same model family the paper used for authoring
 
 ## Evaluation set
 
-The τ² Telecom `base` split at tau2-bench commit `c06b07dd7c4d4ec61ba6ff9bcdf0b15dd7ef36d4`: 114 tasks, 49 MMS, 36 mobile data, 29 service.
-This matches the paper's 114 Telecom tasks.
+Amended on 2026-11-14, before any evaluation run, at the user's request to evaluate a sample instead of all 114 tasks.
+
+The primary set is the τ² Telecom `test` split at tau2-bench commit `c06b07dd7c4d4ec61ba6ff9bcdf0b15dd7ef36d4`: 40 tasks, 16 MMS, 9 mobile data, 15 service.
+It is τ²'s own split and a subset of the `base` split, so the sample is not chosen by us.
+The paper's 114 Telecom tasks are the `base` split. Running the other 74 is optional and would be reported separately.
 Reward is τ²'s environment-assertion check.
+A simulation that crashes is retried up to three times, as τ²'s own runner does, and scored 0 if every attempt crashes.
+
+With 40 tasks, one cell's standard error is about 8 points at 50% accuracy.
+C1 is unaffected in practice: the paper's gain is above 40 points.
+C2 and C3 rest on differences of a few points, so on this sample they will mostly be INCONCLUSIVE.
 
 ## Arms
 
@@ -66,7 +74,7 @@ That decision is recorded before the runs start.
 Each verdict is VERIFIED, NOT VERIFIED, or INCONCLUSIVE.
 
 - **C1. The program raises every student by at least 20 points.**
-  VERIFIED if every student gains at least 20 points and a paired exact McNemar test over the 114 tasks gives p < 0.01.
+  VERIFIED if every student gains at least 20 points and a paired exact McNemar test over the evaluated tasks gives p < 0.01.
   NOT VERIFIED if any student's 95% confidence interval on the paired gain lies entirely below 20.
   INCONCLUSIVE otherwise.
 - **C2. The spread between students shrinks under the program.**
@@ -78,5 +86,10 @@ Each verdict is VERIFIED, NOT VERIFIED, or INCONCLUSIVE.
   NOT VERIFIED if it trails by more than 10 points.
   INCONCLUSIVE between 5 and 10.
 
-A single run of 114 tasks has a standard error near 4.5 points at 50% accuracy.
-C2 and C3 rest on differences close to that resolution, so their verdicts carry that caveat.
+C2 and C3 rest on differences close to one cell's standard error, so their verdicts carry that caveat.
+
+## Order of runs
+
+Qwen3-8B first, both arms, because it carries the paper's headline (Granite-4.2-8B, 43.0 to 91.2).
+The vanilla arm may run before the program is frozen. Its trajectories stay unread until the freeze tag exists.
+Qwen3-4B and Qwen3-14B follow if the user wants the spread claims.
