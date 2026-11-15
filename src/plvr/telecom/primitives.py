@@ -394,8 +394,8 @@ WHERE_VALUE = Primitive(
 def _verify_compare(o: Compare, i: dict) -> str | None:
     if o.state_in_reading and not verbatim(o.state_in_reading, i["reading"]):
         return "state_in_reading not verbatim in reading"
-    if o.state_rule_names and not verbatim(o.state_rule_names, i["rule"] + "\n" + i["rule_text"]):
-        return "state_rule_names not verbatim in rule"
+    if o.state_rule_names and not verbatim(o.state_rule_names, i["rule"]):
+        return "state_rule_names not verbatim in the rule's own words"
     return None
 
 

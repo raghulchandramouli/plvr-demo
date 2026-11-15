@@ -313,9 +313,12 @@ class TelecomProgram:
                 return self._agent_call(
                     rule.check, f"Read {rule.check} for the user's line.", f"Read the current state for the rule {text!r}.", index
                 )
-            answer = self._call(
+            compared = self._call(
                 P.DOES_CONDITION_HOLD, rule=rule.condition, rule_text=rule.policy, reading=f"{rule.check}: {reading.text}"
-            ).answer
+            )
+            answer = compared.answer
+            if rule.escalate and answer == "yes" and not verbatim(compared.state_rule_names, reading.text):
+                answer = "no"  # a transfer ends the conversation, so the state it rests on must be written in the reading
             if answer != "cannot tell":
                 self.decided_by[index] = "reading"
         else:
