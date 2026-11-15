@@ -115,3 +115,12 @@ def test_a_copied_reading_must_name_what_the_rule_is_about():
     assert _about(airplane, "Airplane Mode: OFF")
     network = Rule("MMS", "Optimizing Network Mode Preferences", 'If check_network_mode_preference() shows "2G" or "3G"', None, None, {}, False)
     assert _about(network, "2g_only")
+
+
+def test_mcnemar_exact_matches_the_binomial_tail():
+    from plvr.score import mcnemar_exact
+
+    assert mcnemar_exact(0, 0) == 1.0
+    assert mcnemar_exact(5, 5) == 1.0
+    assert abs(mcnemar_exact(10, 0) - 2 / 2**10) < 1e-12
+    assert mcnemar_exact(12, 2) < 0.05 < mcnemar_exact(7, 3)
