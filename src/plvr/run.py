@@ -114,6 +114,7 @@ def main() -> None:
         help="check the student's actions before they go out: tools = tool-name guard, full = also the policy-precondition guard",
     )
     parser.add_argument("--limit", type=int)
+    parser.add_argument("--id", action="append", dest="ids", help="run only this task of the set; repeat for more")
     parser.add_argument("--concurrency", type=int, default=4)
     parser.add_argument("--user", default=USER_SIMULATOR, choices=sorted(MODELS))
     parser.add_argument("--out", type=Path, required=True)
@@ -121,7 +122,13 @@ def main() -> None:
 
     args.out.mkdir(parents=True, exist_ok=True)
     student, runner = Server(MODELS[args.student]), Server(MODELS[PRIMITIVE_RUNNER])
-    todo = [t for t in tasks.load(args.task_set, args.limit) if not task_file(args.out, t.id).exists()]
+    chosen = tasks.load(args.task_set, args.limit)
+    if args.ids:
+        unknown = set(args.ids) - {t.id for t in chosen}
+        if unknown:
+            parser.error(f"not in --task-set {args.task_set}: {sorted(unknown)}")
+        chosen = [t for t in chosen if t.id in args.ids]
+    todo = [t for t in chosen if not task_file(args.out, t.id).exists()]
     print(f"{len(todo)} tasks to run into {args.out}", flush=True)
     check_servers(student, runner, Server(MODELS[args.user]))
     student.tokenizer, runner.tokenizer  # load once here: a lazy transformers import raced across worker threads
